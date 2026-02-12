@@ -4,11 +4,42 @@
 <head>
     <title>Screenshot Editor</title>
     <style>
+        :root {
+            /* Light Theme (Default) */
+            --bg-app: #f0f2f5;
+            --bg-container: #ffffff;
+            --text-main: #333333;
+            --text-secondary: #666666;
+            --border: #dddddd;
+            --bg-toolbar: #ffffff;
+            --bg-hover: #f3f3f3;
+            --shadow: rgba(0, 0, 0, 0.1);
+
+            --primary: #0078d4;
+            --primary-hover: #106ebe;
+        }
+
+        [data-theme="dark"] {
+            /* Dark Theme */
+            --bg-app: #121212;
+            --bg-container: #242526;
+            --text-main: #e4e6eb;
+            --text-secondary: #b0b3b8;
+            --border: #3e4042;
+            --bg-toolbar: #18191a;
+            --bg-hover: #2d2e30;
+            --shadow: rgba(0, 0, 0, 0.3);
+
+            --primary: #2e89ff;
+            --primary-hover: #1877f2;
+        }
+
         body {
             font-family: 'Segoe UI', system-ui, sans-serif;
             margin: 0;
             padding: 20px;
-            background: #f0f2f5;
+            background: var(--bg-app);
+            color: var(--text-main);
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -16,12 +47,12 @@
         }
 
         .container {
-            background: white;
+            background: var(--bg-container);
             padding: 20px;
             border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            max-width: 90%;
-            width: 800px;
+            box-shadow: 0 4px 12px var(--shadow);
+            max-width: 95%;
+            width: 1200px;
             display: flex;
             flex-direction: column;
             gap: 15px;
@@ -29,17 +60,18 @@
 
         h2 {
             margin: 0;
-            color: #333;
+            color: var(--text-main);
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
 
         .preview-container {
-            border: 1px solid #ddd;
+            border: 1px solid var(--border);
             border-radius: 4px;
             overflow: hidden;
-            background: #fafafa;
+            background: var(--bg-app);
+            /* Use app bg for canvas backdrop */
             display: flex;
             justify-content: center;
         }
@@ -54,18 +86,20 @@
             width: 100%;
             box-sizing: border-box;
             padding: 10px;
-            border: 1px solid #ccc;
+            border: 1px solid var(--border);
             border-radius: 4px;
             font-family: inherit;
             resize: vertical;
             min-height: 80px;
+            background: var(--bg-app);
+            color: var(--text-main);
         }
 
         .actions {
             display: flex;
             justify-content: flex-end;
             gap: 10px;
-            border-top: 1px solid #eee;
+            border-top: 1px solid var(--border);
             padding-top: 15px;
         }
 
@@ -80,16 +114,16 @@
         }
 
         .btn-cancel {
-            background: #f3f2f1;
-            color: #323130;
+            background: var(--bg-hover);
+            color: var(--text-main);
         }
 
         .btn-cancel:hover {
-            background: #edebe9;
+            opacity: 0.8;
         }
 
         .btn-download {
-            background: #0078d4;
+            background: var(--primary);
             color: white;
             display: flex;
             align-items: center;
@@ -97,7 +131,37 @@
         }
 
         .btn-download:hover {
-            background: #106ebe;
+            background: var(--primary-hover);
+        }
+
+        .tool-btn {
+            padding: 6px;
+            background: var(--bg-toolbar) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .tool-btn svg {
+            stroke: var(--text-secondary);
+            /* Default stroke */
+        }
+
+        /* Specific overrides for color tools if needed, or let them keep their colors */
+        #tool-highlight svg {
+            stroke: #FFD700;
+        }
+
+        #tool-pen svg {
+            stroke: #ff0000;
+        }
+
+        #tool-text svg {
+            stroke: var(--text-main);
+        }
+
+        #tool-clear svg {
+            stroke: var(--text-secondary);
         }
     </style>
 </head>
@@ -141,7 +205,7 @@
                 </svg>
             </button>
         </div>
-        <div class="preview-container" style="position:relative; overflow:auto; max-height:60vh; text-align:center;">
+        <div class="preview-container" style="position:relative; overflow:auto; max-height:85vh; text-align:center;">
             <canvas id="editorCanvas" style="max-width:100%; height:auto; display:inline-block;"></canvas>
         </div>
 

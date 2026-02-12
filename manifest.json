@@ -1,15 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "Signal",
-  "version": "1.0",
-  "description": "Captures console errors and network traffic (HAR) for debugging.",
+  "name": "Signal: Report bugs & feedback with context developers love",
+  "version": "1.2",
+  "description": "Record and export detailed bug reports: console logs, network traffic, storage state, environment data, and screencasts.",
   "permissions": [
     "debugger",
     "storage",
     "activeTab",
     "unlimitedStorage",
-    "webNavigation",
-    "downloads"
+    "downloads",
+    "scripting"
   ],
   "host_permissions": [
     "<all_urls>"

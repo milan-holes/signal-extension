@@ -6,286 +6,839 @@
     content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: filesystem:; media-src 'self' data: blob: filesystem:; connect-src *;">
   <title>Signal Report</title>
   <style>
+    :root {
+      /* Palette */
+      --bg-app: #121212;
+      --bg-sidebar: #18191a;
+      --bg-header: #18191a;
+      --bg-card: #242526;
+      --bg-hover: #2d2e30;
+      --bg-input: #3a3b3c;
+
+      --border-color: #3e4042;
+
+      --text-main: #e4e6eb;
+      --text-secondary: #b0b3b8;
+
+      --primary: #2e89ff;
+      /* Signal Blue */
+      --primary-hover: #1877f2;
+
+      --success: #31a24c;
+      --danger: #fa383e;
+      --warning: #f0ad4e;
+
+      --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+      --shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    [data-theme="light"] {
+      /* Fallback for light mode if user toggles it, though request is for dark mode specifically */
+      --bg-app: #f0f2f5;
+      --bg-sidebar: #ffffff;
+      --bg-header: #ffffff;
+      --bg-card: #ffffff;
+      --bg-hover: #f2f2f2;
+      --bg-input: #f0f2f5;
+      --border-color: #dddfe2;
+      --text-main: #050505;
+      --text-secondary: #65676b;
+      --primary: #1877f2;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
     body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      padding: 20px;
-      color: #333;
-    }
-
-    h1 {
-      border-bottom: 1px solid #ccc;
-      padding-bottom: 10px;
-      margin-top: 0;
-    }
-
-    .tabs {
+      font-family: var(--font-family);
+      background-color: var(--bg-app);
+      color: var(--text-main);
+      margin: 0;
+      padding: 0;
+      height: 100vh;
       display: flex;
-      margin-bottom: 20px;
-      border-bottom: 1px solid #ccc;
+      /* Sidebar layout */
+      overflow: hidden;
     }
 
-    .tab {
-      padding: 10px 20px;
+    /* Layout Grid */
+    .app-layout {
+      display: flex;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 250px;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      z-index: 20;
+    }
+
+    .sidebar-header {
+      height: 55px;
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--border-color);
+      font-weight: 700;
+      font-size: 16px;
+      gap: 10px;
+      color: var(--text-main);
+    }
+
+    .sidebar-nav {
+      flex: 1;
+      padding: 15px 10px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      padding: 10px 15px;
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
       cursor: pointer;
-      border: 1px solid transparent;
-      border-bottom: none;
-      margin-bottom: -1px;
+      border-radius: 6px;
+      transition: all 0.2s;
     }
 
-    .tab:hover {
-      background-color: #f0f0f0;
+    .nav-item svg {
+      margin-right: 12px;
+      opacity: 0.7;
     }
 
-    .tab.active {
-      background: #fff;
-      font-weight: bold;
-      border: 1px solid #ccc;
-      border-bottom: 2px solid white;
-      border-top: 2px solid #0078d4;
+    .nav-item:hover {
+      background: var(--bg-hover);
+      color: var(--text-main);
+    }
+
+    .nav-item.active {
+      background: rgba(46, 137, 255, 0.15);
+      color: var(--primary);
+    }
+
+    .nav-item.active svg {
+      opacity: 1;
+      stroke: var(--primary);
+    }
+
+    /* Main Content */
+    .main-wrapper {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      background: var(--bg-app);
+    }
+
+    .top-header {
+      height: 55px;
+      padding: 0 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-color);
+      background: var(--bg-header);
+    }
+
+    .report-meta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .report-title {
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+
+    .badge-date {
+      background: var(--bg-input);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      color: var(--text-main);
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .action-btn {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .action-btn:hover {
+      background: var(--bg-hover);
+      border-color: var(--text-secondary);
+    }
+
+    .action-btn.primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: white;
+    }
+
+    .action-btn.primary:hover {
+      background: var(--primary-hover);
+    }
+
+    /* Content Area */
+    .content-area {
+      flex: 1;
+      overflow: hidden;
+      display: flex;
+      position: relative;
     }
 
     .tab-content {
       display: none;
+      flex: 1;
+      flex-direction: column;
+      height: 100%;
+      overflow: hidden;
     }
 
     .tab-content.active {
-      display: block;
+      display: flex;
+    }
+
+    /* Tables */
+    .table-container {
+      flex: 1;
+      overflow: auto;
+      padding: 0;
     }
 
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 14px;
-    }
-
-    th,
-    td {
-      border: 1px solid #ddd;
-      padding: 8px;
-      text-align: left;
-      vertical-align: top;
     }
 
     th {
-      background-color: #f8f8f8;
+      position: sticky;
+      top: 0;
+      background: var(--bg-header);
+      padding: 10px 15px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border-color);
+      z-index: 10;
+      letter-spacing: 0.5px;
+    }
+
+    td {
+      padding: 10px 15px;
+      border-bottom: 1px solid var(--border-color);
+      font-size: 13px;
+      color: var(--text-main);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 300px;
+      vertical-align: middle;
+    }
+
+    td a {
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    td a:hover {
+      text-decoration: underline;
+    }
+
+    tbody tr {
+      transition: background 0.1s;
+      cursor: pointer;
+    }
+
+    tbody tr:hover {
+      background-color: var(--bg-hover);
+    }
+
+    tbody tr.selected {
+      background-color: rgba(46, 137, 255, 0.1);
+      border-left: 2px solid var(--primary);
+    }
+
+    /* Stats/Badges */
+    .badge {
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 11px;
       font-weight: 600;
+      display: inline-block;
+      min-width: 30px;
+      text-align: center;
     }
 
-    tr:nth-child(even) {
-      background-color: #fcfcfc;
+    .badge-success,
+    .status-200 {
+      background: rgba(49, 162, 76, 0.2);
+      color: #4ade80;
     }
 
-    .error-row {
-      color: #d13438;
+    .badge-warn,
+    .status-300,
+    .status-400 {
+      background: rgba(240, 173, 78, 0.2);
+      color: #fcd34d;
     }
 
-    .code {
-      font-family: Consolas, "Courier New", monospace;
-      font-size: 12px;
+    .badge-error,
+    .status-500,
+    .status-failed {
+      background: rgba(250, 56, 62, 0.2);
+      color: #f87171;
     }
 
-    .meta {
-      color: #666;
-      font-size: 12px;
+    .badge-info,
+    .status-100 {
+      background: rgba(46, 137, 255, 0.2);
+      color: #60a5fa;
     }
 
-    .filter-bar {
+    /* Filter Bar */
+    .filters-bar {
+      padding: 10px 20px;
       display: flex;
       align-items: center;
-      margin-bottom: 10px;
-      flex-wrap: wrap;
-      gap: 10px;
+      gap: 12px;
+      border-bottom: 1px solid var(--border-color);
+      background: var(--bg-app);
     }
 
-    .filter-group {
-      display: flex;
-      gap: 5px;
-      flex-wrap: wrap;
+    .search-input {
+      background: var(--bg-header);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 6px 12px;
+      border-radius: 4px;
+      width: 250px;
+      outline: none;
+      font-size: 13px;
     }
 
-    .filter-btn {
-      padding: 5px 10px;
-      border: 1px solid #ccc;
-      background: #f0f0f0;
+    .search-input:focus {
+      border-color: var(--primary);
+    }
+
+    .filter-chip {
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
       cursor: pointer;
-      border-radius: 3px;
+      color: var(--text-secondary);
+      border: 1px solid var(--border-color);
+      transition: all 0.2s;
+      background: var(--bg-header);
+    }
+
+    .filter-chip.active {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+
+    /* Timeline Split */
+    .timeline-bg {
+      background: var(--bg-app);
+    }
+
+    .timeline-header {
+      background: var(--bg-header);
+      color: var(--text-secondary);
+      font-weight: 600;
+      font-size: 12px;
+      padding: 8px 15px;
+      border-bottom: 1px solid var(--border-color);
+      border-top: 1px solid var(--border-color);
+    }
+
+    /* Details Panel */
+    .details-panel {
+      width: 400px;
+      background: var(--bg-card);
+      border-left: 1px solid var(--border-color);
+      display: none;
+      /* hidden by default */
+      flex-direction: column;
+      z-index: 30;
+    }
+
+    .details-panel.open {
+      display: flex;
+    }
+
+    .details-header-bar {
+      height: 50px;
+      padding: 0 15px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-color);
+      background: var(--bg-header);
+    }
+
+    .details-title {
+      font-weight: 600;
+      color: var(--text-main);
+      font-size: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 320px;
+    }
+
+    .details-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 15px;
+    }
+
+    .section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+      font-weight: 700;
+      margin-top: 15px;
+      margin-bottom: 8px;
+      letter-spacing: 0.5px;
+    }
+
+    .code-block {
+      background: var(--bg-input);
+      padding: 10px;
+      border-radius: 4px;
+      font-family: 'Menlo', 'Monaco', monospace;
+      font-size: 11px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      color: var(--text-secondary);
+      border: 1px solid var(--border-color);
+      max-height: 250px;
+      overflow-y: auto;
+    }
+
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 5px 0;
+      border-bottom: 1px solid var(--border-color);
       font-size: 12px;
     }
 
-    .filter-btn:hover {
-      background: #e0e0e0;
+    .detail-key {
+      color: var(--text-secondary);
     }
 
-    .filter-btn.active {
-      background: #0078d4;
-      color: white;
-      border-color: #005a9e;
+    .detail-val {
+      color: var(--text-main);
+      font-family: monospace;
+    }
+
+    .close-icon {
+      cursor: pointer;
+      opacity: 0.6;
+      transition: opacity 0.2s;
+    }
+
+    .close-icon:hover {
+      opacity: 1;
     }
   </style>
 </head>
 
 <body>
-  <h1>Signal Report</h1>
-  <div class="tabs">
-    <div class="tab active" data-target="console">Console Errors</div>
-    <div class="tab" data-target="network">Network (HAR)</div>
-    <div class="tab" data-target="timeline">User Events</div>
-    <div class="tab" data-target="screen">Screen Recording</div>
-    <div class="tab" data-target="issues">Reported Issues</div>
-    <div class="tab" data-target="changes">Content Changes</div>
-  </div>
 
-  <div id="console" class="tab-content active">
-    <table id="consoleTable">
-      <thead>
-        <tr>
-          <th style="width: 150px;">Timestamp</th>
-          <th style="width: 80px;">Level</th>
-          <th style="width: 100px;">Source</th>
-          <th>Message</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  </div>
+  <div class="app-layout">
 
-  <div id="network" class="tab-content">
-    <div class="filter-bar">
-      <input type="text" id="networkSearch" placeholder="Filter by name..."
-        style="padding: 5px; width: 200px; border: 1px solid #ccc; border-radius: 3px;">
-      <div class="filter-group" id="networkFilters">
-        <button class="filter-btn active" data-type="all">All</button>
-        <button class="filter-btn" data-type="xhr">Fetch/XHR</button>
-        <button class="filter-btn" data-type="js">JS</button>
-        <button class="filter-btn" data-type="css">CSS</button>
-        <button class="filter-btn" data-type="img">Img</button>
-        <button class="filter-btn" data-type="media">Media</button>
-        <button class="filter-btn" data-type="font">Font</button>
-        <button class="filter-btn" data-type="doc">Doc</button>
-        <button class="filter-btn" data-type="ws">WS</button>
-        <button class="filter-btn" data-type="other">Other</button>
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" style="margin-right:8px;">
+          <path d="M14 8 L23 4 V13 Z" fill="#2e89ff" fill-opacity="0.4" />
+          <path d="M8 21 L10 10 H14 L16 21 H8 Z" fill="#2e89ff" />
+          <path d="M12 2 L9 6 H15 L12 2 Z" fill="#2e89ff" />
+          <rect x="10" y="6" width="4" height="4" fill="#2e89ff" />
+        </svg>
+        Signal Report
       </div>
-    </div>
-    <table id="networkTable">
-      <thead>
-        <tr>
-          <th style="width: 180px;">Start Time</th>
-          <th style="width: 80px;">Method</th>
-          <th style="width: 60px;">Status</th>
-          <th>URL</th>
-          <th style="width: 80px;">Time (ms)</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  </div>
 
-  <div id="timeline" class="tab-content">
-    <div style="display: flex; height: calc(100vh - 150px);">
-      <div style="flex: 1; overflow-y: auto; border-right: 1px solid #ccc; padding-right: 10px;">
-        <table id="timelineTable">
-          <thead>
-            <tr>
-              <th style="width: 120px;">Time</th>
-              <th style="width: 100px;">Source</th>
-              <th>Event Details</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <div id="timelinePreview" style="flex: 1; padding-left: 10px; display: flex; flex-direction: column;">
-        <h3>State Preview</h3>
-        <div
-          style="text-align: center; background: #000; min-height: 200px; display: flex; align-items: center; justify-content: center;">
-          <img id="previewImage" style="max-width: 100%; max-height: 300px;" alt="Select an event to see screen state">
+      <nav class="sidebar-nav">
+        <div class="nav-item tab-btn active" data-target="environment">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="20" x2="12" y2="10"></line>
+            <line x1="18" y1="20" x2="18" y2="4"></line>
+            <line x1="6" y1="20" x2="6" y2="16"></line>
+          </svg>
+          Environment
         </div>
-        <div style="margin-top: 20px; flex: 1; overflow-y: auto;">
-          <h4>Context at this time</h4>
-          <div id="previewContext"></div>
+        <div class="nav-item tab-btn" data-target="console">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="4 17 10 11 4 5"></polyline>
+            <line x1="12" y1="19" x2="20" y2="19"></line>
+          </svg>
+          Console Errors
+        </div>
+        <div class="nav-item tab-btn" data-target="network">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+            <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+            <line x1="12" y1="20" x2="12.01" y2="20"></line>
+          </svg>
+          Network (HAR)
+        </div>
+        <div class="nav-item tab-btn" data-target="storage">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+            <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+          </svg>
+          Storage
+        </div>
+        <div class="nav-item tab-btn" data-target="timeline">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"></path>
+            <path d="M13 13l6 6"></path>
+          </svg>
+          User Events
+        </div>
+        <div class="nav-item tab-btn" data-target="screen">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M23 7l-7 5 7 5V7z"></path>
+            <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+          </svg>
+          Recording
+        </div>
+        <div class="nav-item tab-btn" data-target="issues">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"></polygon>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+          Issues
+        </div>
+        <div class="nav-item tab-btn" data-target="changes">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+          Content Changes
+        </div>
+      </nav>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main-wrapper">
+      <header class="top-header">
+        <div class="report-meta">
+          <button id="importBtn" class="action-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            Import
+          </button>
+          <span class="report-title" id="reportDate"></span>
+        </div>
+        <div class="header-actions">
+          <button id="themeToggle" class="action-btn" title="Toggle Dark Mode">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+          </button>
+          <button id="downloadBtn" class="action-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            Export
+          </button>
+          <button id="replayBtn" class="action-btn primary">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            Replay
+          </button>
+          <button id="jiraBtn" class="action-btn primary" style="display:none;">JIRA</button>
+        </div>
+      </header>
+
+      <input type="file" id="fileInput" accept=".json" style="display:none;">
+
+      <div class="content-area">
+
+        <!-- Environment -->
+        <div id="environment" class="tab-content active" style="padding: 20px; overflow-y: auto;">
+          <h2 style="margin-top:0; margin-bottom:20px; font-size:18px; color:var(--text-main);">Environment Details</h2>
+          <div id="envGrid"
+            style="display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:20px;"></div>
+        </div>
+
+        <!-- Console -->
+        <div id="console" class="tab-content">
+          <div class="filters-bar">
+            <input type="text" id="consoleSearch" class="search-input" placeholder="Search logs...">
+            <div class="filter-chip active" data-filter="all"
+              style="background:var(--primary); color:white; border-color:var(--primary);">All</div>
+            <div class="filter-chip" data-filter="error">Errors</div>
+            <div class="filter-chip" data-filter="warning">Warnings</div>
+            <div class="filter-chip" data-filter="log">Logs</div>
+          </div>
+          <div class="table-container">
+            <table id="consoleTable">
+              <thead>
+                <tr>
+                  <th style="width:140px; cursor:pointer; white-space:nowrap;" class="sortable" data-key="time">Time
+                    <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"
+                      style="margin-left:5px; opacity:0.5;">
+                      <path d="M7 15l5 5 5-5M7 9l5-5 5 5" />
+                    </svg>
+                  </th>
+                  <th style="width:80px; cursor:pointer; white-space:nowrap;" class="sortable" data-key="level">Level
+                    <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"
+                      style="margin-left:5px; opacity:0.5;">
+                      <path d="M7 15l5 5 5-5M7 9l5-5 5 5" />
+                    </svg>
+                  </th>
+                  <th style="width:120px; cursor:pointer; white-space:nowrap;" class="sortable" data-key="source">Source
+                    <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"
+                      style="margin-left:5px; opacity:0.5;">
+                      <path d="M7 15l5 5 5-5M7 9l5-5 5 5" />
+                    </svg>
+                  </th>
+                  <th style="cursor:pointer; white-space:nowrap;" class="sortable" data-key="text">Message <svg
+                      viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"
+                      style="margin-left:5px; opacity:0.5;">
+                      <path d="M7 15l5 5 5-5M7 9l5-5 5 5" />
+                    </svg></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Network -->
+        <div id="network" class="tab-content">
+          <div class="filters-bar">
+            <input type="text" id="networkSearch" class="search-input" placeholder="Filter URL...">
+            <div class="filter-chip active"
+              style="background:var(--primary); color:white; border-color:var(--primary);">All</div>
+            <div class="filter-chip">Fetch/XHR</div>
+            <div class="filter-chip">JS</div>
+            <div class="filter-chip">CSS</div>
+            <div class="filter-chip">Img</div>
+            <div class="filter-chip">Media</div>
+            <div class="filter-chip">Doc</div>
+          </div>
+          <div class="table-container">
+            <table id="networkTable">
+              <thead>
+                <tr>
+                  <th style="width:100px; cursor:pointer; white-space:nowrap;" class="sortable" data-key="start">START
+                    <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"
+                      style="margin-left:5px; opacity:0.5;">
+                      <path d="M7 15l5 5 5-5M7 9l5-5 5 5" />
+                    </svg>
+                  </th>
+                  <th style="width:80px; cursor:pointer; white-space:nowrap;" class="sortable" data-key="method">METHOD
+                    <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"
+                      style="margin-left:5px; opacity:0.5;">
+                      <path d="M7 15l5 5 5-5M7 9l5-5 5 5" />
+                    </svg>
+                  </th>
+                  <th style="width:80px; cursor:pointer; white-space:nowrap;" class="sortable" data-key="status">STATUS
+                    <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"
+                      style="margin-left:5px; opacity:0.5;">
+                      <path d="M7 15l5 5 5-5M7 9l5-5 5 5" />
+                    </svg>
+                  </th>
+                  <th style="cursor:pointer; white-space:nowrap;" class="sortable" data-key="name">NAME / URL <svg
+                      viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"
+                      style="margin-left:5px; opacity:0.5;">
+                      <path d="M7 15l5 5 5-5M7 9l5-5 5 5" />
+                    </svg></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Timeline -->
+        <div id="timeline" class="tab-content">
+          <div style="display:flex; height:100%; overflow:hidden;">
+            <div style="flex:0 0 450px; border-right:1px solid var(--border-color); overflow-y:auto;">
+              <table id="timelineTable">
+                <thead>
+                  <tr>
+                    <th style="width:100px;">Time</th>
+                    <th style="width:80px;">Source</th>
+                    <th>Event Details</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div style="flex:1; display:flex; flex-direction:column; background:var(--bg-app); overflow-y:auto;">
+              <div class="timeline-header">State Preview</div>
+              <div style="background:black; padding:20px; display:flex; justify-content:center; align-items:center;">
+                <img id="previewImage" style="max-width:100%; max-height:350px; box-shadow:0 4px 15px rgba(0,0,0,0.5);">
+              </div>
+              <div class="timeline-header">Context Analysis</div>
+              <div id="previewContext" style="padding:15px; color:var(--text-main);"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Storage -->
+        <div id="storage" class="tab-content" style="padding: 20px; overflow-y: auto;">
+          <h2 style="margin-top:0; margin-bottom:15px; font-size:18px; color:var(--text-main);">Storage Viewer</h2>
+          <div class="filters-bar" style="background:transparent; border:none; padding:0; margin-bottom:15px;">
+            <div class="filter-chip active" data-storage-type="local" style="width:auto;">Local Storage</div>
+            <div class="filter-chip" data-storage-type="session" style="width:auto;">Session Storage</div>
+            <div class="filter-chip" data-storage-type="cookies" style="width:auto;">Cookies</div>
+          </div>
+          <div id="storageTableContainer" class="table-container"
+            style="background:var(--bg-card); border-radius:8px; border:1px solid var(--border-color); overflow:auto;">
+            <table id="storageTable" style="width:100%;">
+              <thead>
+                <tr>
+                  <th style="width:30%;">Key</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Screen -->
+        <div id="screen" class="tab-content">
+          <div
+            style="display:flex; flex-direction:column; align-items:center; padding:20px; height:100%; justify-content:center;">
+            <div
+              style="width:100%; max-width:800px; display:flex; align-items:center; gap:15px; background:var(--bg-card); padding:10px 20px; border-radius:8px; border:1px solid var(--border-color); margin-bottom:20px;">
+              <button id="playBtn" class="action-btn primary"
+                style="width:80px; display:flex; align-items:center; justify-content:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg>
+                Play
+              </button>
+              <span id="timeDisplay" style="font-family:monospace;">00:00</span>
+              <input type="range" id="scrubber" min="0" max="100" value="0" style="flex:1;">
+            </div>
+            <div
+              style="border:1px solid var(--border-color); padding:5px; background:#000; border-radius:6px; max-height:100%;">
+              <img id="screenPlayer" style="max-width:100%; max-height:calc(100vh - 200px); display:block;">
+            </div>
+          </div>
+        </div>
+
+        <!-- Issues -->
+        <div id="issues" class="tab-content" style="padding:20px; overflow-y:auto;">
+          <div id="issuesList"></div>
+        </div>
+
+        <!-- Changes -->
+        <div id="changes" class="tab-content" style="padding:20px; overflow-y:auto;">
+          <div id="changesList"></div>
+        </div>
+
+      </div>
+    </main>
+
+    <!-- RIGHT DETAILS PANEL -->
+    <aside class="details-panel" id="detailPanel">
+      <div class="details-header-bar">
+        <div class="details-title" id="modalTitle">Details</div>
+        <svg class="close-icon" id="closeDetailBtn" width="20" height="20" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </div>
+      <div class="details-body">
+
+        <!-- General Section -->
+        <div id="generalBox" style="margin-bottom: 20px;">
+          <div class="section-title">GENERAL</div>
+          <div id="generalInfo" style="display: flex; flex-direction: column; gap: 8px;"></div>
+        </div>
+
+        <div id="resHeadersBox">
+          <div class="section-title">Response Headers <span id="resHeadersCount" class="badge"
+              style="background:var(--bg-input); color:var(--text-secondary); margin-left:5px;">0</span></div>
+          <div class="code-block" id="resHeaders"></div>
+        </div>
+
+        <div id="reqHeadersBox" style="margin-top:15px;">
+          <div class="section-title">Request Headers <span id="reqHeadersCount" class="badge"
+              style="background:var(--bg-input); color:var(--text-secondary); margin-left:5px;">0</span></div>
+          <div class="code-block" id="reqHeaders"></div>
+        </div>
+
+        <div id="reqBodyBox" style="margin-top:15px;">
+          <div class="section-title">Request Body</div>
+          <div class="code-block" id="reqBody"></div>
+        </div>
+
+        <div id="resBodyBox" style="margin-top:15px;">
+          <div class="section-title">Response Body</div>
+          <div class="code-block" id="resBody"></div>
         </div>
       </div>
-    </div>
-  </div>
+    </aside>
 
-  <div id="screen" class="tab-content">
-    <div
-      style="text-align:center; margin-bottom:10px; display:flex; align-items:center; justify-content:center; gap:10px;">
-      <button id="playBtn" style="padding:5px 15px; cursor:pointer;">Play</button>
-      <input type="range" id="scrubber" min="0" max="100" value="0" style="width:60%;">
-      <span id="timeDisplay">00:00</span>
-    </div>
-    <div style="text-align:center;">
-      <img id="screenPlayer" style="max-width:100%; border:1px solid #ccc;">
-    </div>
-  </div>
+    <!-- Hidden Elements to keep JS from crashing if it looks for them -->
+    <div id="detailModal" style="display:none;"></div>
 
-  <div id="issues" class="tab-content">
-    <div id="issuesList"></div>
-  </div>
-
-  <div id="changes" class="tab-content">
-    <div id="changesList"></div>
-  </div>
-
-  <div id="detailModal" class="modal"
-    style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5);">
-    <div class="modal-content"
-      style="background:white; margin:5% auto; padding:20px; width:80%; max-height:80%; overflow-y:auto; border-radius:4px; position:relative;">
-      <span class="close"
-        style="position:absolute; top:10px; right:20px; font-size:24px; cursor:pointer;">&times;</span>
-      <h2 id="modalTitle" style="margin-top:0; word-break:break-all;"></h2>
-
-      <h3>Request Headers</h3>
-      <div style="position:relative;">
-        <button class="copy-btn codesnippet-copy" data-target="reqHeaders" title="Copy to clipboard"
-          style="position:absolute; top:5px; right:5px; background:white; border:1px solid #ccc; padding:4px; cursor:pointer; border-radius:4px; z-index:10;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
-            <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
-          </svg>
-        </button>
-        <pre id="reqHeaders" class="code" style="background:#f4f4f4; padding:10px; overflow-x:auto;"></pre>
-      </div>
-
-      <h3>Request Body</h3>
-      <div style="position:relative;">
-        <button class="copy-btn codesnippet-copy" data-target="reqBody" title="Copy to clipboard"
-          style="position:absolute; top:5px; right:5px; background:white; border:1px solid #ccc; padding:4px; cursor:pointer; border-radius:4px; z-index:10;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
-            <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
-          </svg>
-        </button>
-        <pre id="reqBody" class="code"
-          style="background:#f4f4f4; padding:10px; overflow-x:auto; white-space: pre-wrap;"></pre>
-      </div>
-
-      <h3>Response Headers</h3>
-      <div style="position:relative;">
-        <button class="copy-btn codesnippet-copy" data-target="resHeaders" title="Copy to clipboard"
-          style="position:absolute; top:5px; right:5px; background:white; border:1px solid #ccc; padding:4px; cursor:pointer; border-radius:4px; z-index:10;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
-            <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
-          </svg>
-        </button>
-        <pre id="resHeaders" class="code" style="background:#f4f4f4; padding:10px; overflow-x:auto;"></pre>
-      </div>
-
-      <h3>Response Body</h3>
-      <div style="position:relative;">
-        <button class="copy-btn codesnippet-copy" data-target="resBody" title="Copy to clipboard"
-          style="position:absolute; top:5px; right:5px; background:white; border:1px solid #ccc; padding:4px; cursor:pointer; border-radius:4px; z-index:10;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
-            <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
-          </svg>
-        </button>
-        <pre id="resBody" class="code"
-          style="background:#f4f4f4; padding:10px; overflow-x:auto; white-space: pre-wrap;"></pre>
-      </div>
-    </div>
   </div>
 
   <script src="viewer.js"></script>

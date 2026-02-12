@@ -64,10 +64,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-function startRecording(tabId, mode = 'standard', keepData = false) {
+function startRecording(tabId, mode = 'standard', keepData = false, callback = null, environment = null, storage = null) {
   chrome.debugger.attach({ tabId: tabId }, "1.3", () => {
     if (chrome.runtime.lastError) {
       console.error(chrome.runtime.lastError);
+      if (callback) callback({ status: "error", message: chrome.runtime.lastError.message });
       return;
     }
 
@@ -85,6 +86,8 @@ function startRecording(tabId, mode = 'standard', keepData = false) {
       screencast: keepData ? (existingData.screencast || []) : [],
       issues: keepData ? (existingData.issues || []) : [],
       contentChanges: keepData ? (existingData.contentChanges || []) : [],
+      environment: environment || (keepData ? existingData.environment : null),
+      storage: storage || (keepData ? existingData.storage : null),
       startTime: keepData ? (existingData.startTime || new Date().toISOString()) : new Date().toISOString()
     };
 
@@ -110,12 +113,86 @@ function startRecording(tabId, mode = 'standard', keepData = false) {
     chrome.debugger.sendCommand({ tabId: tabId }, "Page.enable");
     chrome.debugger.sendCommand({ tabId: tabId }, "Page.startScreencast", { format: 'jpeg', quality: 50, everyNthFrame: 1 });
 
+    // Fetch environment and storage details if not provided
+    if ((!environment || !storage) && (!keepData || !existingData.environment)) {
+      const expression = `
+        (function() {
+          const getStorage = (type) => {
+            try {
+              const s = window[type];
+              const data = {};
+              for (let i = 0; i < s.length; i++) {
+                const key = s.key(i);
+                data[key] = s.getItem(key);
+              }
+              return data;
+            } catch (e) { return {}; }
+          };
+          
+          const getCookies = () => {
+            try {
+              const cookies = {};
+              if (document.cookie) {
+                document.cookie.split(';').forEach(c => {
+                  const parts = c.split('=');
+                  const k = parts.shift().trim();
+                  const v = parts.join('=');
+                  if (k) cookies[k] = v;
+                });
+              }
+              return cookies;
+            } catch (e) { return {}; }
+          };
+
+          return JSON.stringify({
+            env: {
+              userAgent: navigator.userAgent,
+              language: navigator.language,
+              platform: navigator.platform,
+              cookieEnabled: navigator.cookieEnabled,
+              screenSize: window.screen.width + 'x' + window.screen.height,
+              windowSize: window.innerWidth + 'x' + window.innerHeight,
+              devicePixelRatio: window.devicePixelRatio,
+              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              hardwareConcurrency: navigator.hardwareConcurrency || 'N/A',
+              deviceMemory: navigator.deviceMemory || 'N/A',
+              connectionType: navigator.connection ? navigator.connection.effectiveType : 'N/A',
+              url: window.location.href
+            },
+            storage: {
+              localStorage: getStorage('localStorage'),
+              sessionStorage: getStorage('sessionStorage'),
+              cookies: getCookies()
+            }
+          });
+        })();
+      `;
+      chrome.debugger.sendCommand({ tabId: tabId }, "Runtime.evaluate", { expression: expression, returnByValue: true }, (res) => {
+        if (chrome.runtime.lastError) {
+          console.warn("Env/Storage capture failed:", chrome.runtime.lastError);
+        } else if (res && res.result && res.result.value) {
+          try {
+            const data = JSON.parse(res.result.value);
+            console.log("Env/Storage captured via Runtime.evaluate", data);
+            if (attachedTabs[tabId]) {
+              if (!attachedTabs[tabId].environment) attachedTabs[tabId].environment = data.env;
+              if (!attachedTabs[tabId].storage) attachedTabs[tabId].storage = data.storage;
+            }
+          } catch (e) {
+            console.error("Failed to parse env/storage data", e);
+          }
+        }
+      });
+    }
+
     // Show overlay
     chrome.tabs.sendMessage(tabId, { action: "showOverlay", mode: mode });
 
     // Set recording icon state
     chrome.action.setBadgeText({ text: "REC", tabId: tabId });
     chrome.action.setBadgeBackgroundColor({ color: "#d13438", tabId: tabId });
+
+    if (callback) callback({ status: "started" });
   });
 }
 
@@ -159,8 +236,11 @@ function pruneData(tabId) {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "start") {
     const tabId = request.tabId || (sender.tab ? sender.tab.id : null);
-    startRecording(tabId, 'standard');
-    sendResponse({ status: "started" });
+    const env = request.environment || null;
+    const storage = request.storage || null;
+    startRecording(tabId, 'standard', false, (result) => {
+      sendResponse(result);
+    }, env, storage);
     return true; // Async response
   }
 
@@ -329,7 +409,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       tempScreenshot: {
         dataUrl: request.dataUrl,
         mode: request.mode,
-        highlightBox: request.highlightBox,
+        highlightBox: (request.mode === 'region') ? null : request.highlightBox,
         timestamp: Date.now()
       }
     }, () => {
@@ -351,54 +431,130 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === "initiateScreenshot") {
+    const tabId = request.tabId;
+    const type = request.type;
+
+    chrome.tabs.sendMessage(tabId, { action: "triggerScreenshot", type: type }, (res) => {
+      if (chrome.runtime.lastError) {
+        // Content script likely not loaded, inject it
+        if (chrome.scripting) {
+          chrome.scripting.executeScript({
+            target: { tabId: tabId },
+            files: ['content.js']
+          }, () => {
+            if (!chrome.runtime.lastError) {
+              setTimeout(() => {
+                chrome.tabs.sendMessage(tabId, { action: "triggerScreenshot", type: type });
+              }, 100);
+            }
+          });
+        }
+      }
+    });
+    return true;
+  }
+
   if (request.action === "captureScreenshot") {
     const tabId = request.tabId || (sender.tab ? sender.tab.id : null);
-
-    // Helper to capture via debugger
-    const captureViaDebugger = (clip) => {
-      // Check if attached
-      const isAttached = attachedTabs[tabId] && attachedTabs[tabId].isRecording;
-      const attachIfNeeded = (cb) => {
-        if (isAttached) return cb();
-        chrome.debugger.attach({ tabId: tabId }, "1.3", () => {
-          if (chrome.runtime.lastError) return sendResponse({ error: chrome.runtime.lastError.message });
-          cb(() => chrome.debugger.detach({ tabId: tabId })); // cleanup if temp attached
-        });
-      };
-
-      attachIfNeeded((cleanup) => {
-        const params = { format: 'png', fromSurface: true };
-        if (request.type === 'full') {
-          params.captureBeyondViewport = true;
-        } else if (request.type === 'region' && request.area) {
-          params.clip = { x: request.area.x, y: request.area.y, width: request.area.width, height: request.area.height, scale: 1 };
-        }
-
-        chrome.debugger.sendCommand({ tabId: tabId }, "Page.captureScreenshot", params, (result) => {
-          if (cleanup) cleanup();
-          if (chrome.runtime.lastError) {
-            sendResponse({ error: chrome.runtime.lastError.message });
-          } else {
-            sendResponse({ dataUrl: "data:image/png;base64," + result.data });
-          }
-        });
-      });
-    };
 
     if (request.type === 'visible') {
       chrome.tabs.get(tabId, (tab) => {
         if (chrome.runtime.lastError) return sendResponse({ error: chrome.runtime.lastError.message });
-
         // windowId is required
         chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' }, (dataUrl) => {
           if (chrome.runtime.lastError) sendResponse({ error: chrome.runtime.lastError.message });
           else sendResponse({ dataUrl: dataUrl });
         });
       });
-    } else {
-      // Full or Region via debugger
-      captureViaDebugger();
+      return true;
     }
+
+    // Helper to capture via debugger
+    const captureViaDebugger = () => {
+      // Check if attached
+      const isAttached = attachedTabs[tabId] && attachedTabs[tabId].isRecording;
+      const attachIfNeeded = (cb) => {
+        if (isAttached) return cb();
+        chrome.debugger.attach({ tabId: tabId }, "1.3", () => {
+          if (chrome.runtime.lastError) {
+            // If already attached, try to reuse the connection
+            if (chrome.runtime.lastError.message.includes("Another debugger")) {
+              return cb();
+            }
+            return sendResponse({ error: chrome.runtime.lastError.message });
+          }
+          cb(() => chrome.debugger.detach({ tabId: tabId })); // cleanup if temp attached
+        });
+      };
+
+      attachIfNeeded((cleanup) => {
+        if (request.type === 'full') {
+          // Robust Full Page Capture using Emulation
+          chrome.debugger.sendCommand({ tabId: tabId }, "Page.getLayoutMetrics", {}, (metrics) => {
+            if (chrome.runtime.lastError) {
+              if (cleanup) cleanup();
+              return sendResponse({ error: chrome.runtime.lastError.message });
+            }
+
+            const width = Math.ceil(metrics.contentSize.width);
+            const height = Math.ceil(metrics.contentSize.height);
+
+            const deviceMetrics = {
+              width: width,
+              height: height,
+              deviceScaleFactor: 1,
+              mobile: false
+            };
+
+            chrome.debugger.sendCommand({ tabId: tabId }, "Emulation.setDeviceMetricsOverride", deviceMetrics, () => {
+              // Give the renderer a moment to update layout/paint for the new massive viewport
+              setTimeout(() => {
+                chrome.debugger.sendCommand({ tabId: tabId }, "Page.captureScreenshot", { format: 'png', fromSurface: true }, (result) => {
+                  // Always reset metrics
+                  chrome.debugger.sendCommand({ tabId: tabId }, "Emulation.clearDeviceMetricsOverride", {}, () => {
+                    if (cleanup) cleanup();
+                    if (chrome.runtime.lastError) {
+                      sendResponse({ error: chrome.runtime.lastError.message });
+                    } else if (result && result.data) {
+                      sendResponse({ dataUrl: "data:image/png;base64," + result.data });
+                    } else {
+                      sendResponse({ error: "Capture failed" });
+                    }
+                  });
+                });
+              }, 150); // 150ms wait
+            });
+          });
+        } else {
+          // Region capture (Standard)
+          const params = { format: 'png' };
+          if (request.type === 'region' && request.area) {
+            params.fromSurface = true;
+            params.clip = {
+              x: request.area.x,
+              y: request.area.y,
+              width: request.area.width,
+              height: request.area.height,
+              scale: request.area.scale || 1
+            };
+          }
+
+          chrome.debugger.sendCommand({ tabId: tabId }, "Page.captureScreenshot", params, (result) => {
+            if (cleanup) cleanup();
+            if (chrome.runtime.lastError) {
+              sendResponse({ error: chrome.runtime.lastError.message });
+            } else if (result && result.data) {
+              sendResponse({ dataUrl: "data:image/png;base64," + result.data });
+            } else {
+              sendResponse({ error: "Capture failed" });
+            }
+          });
+        }
+      });
+    };
+
+    captureViaDebugger();
     return true;
   }
 
@@ -486,6 +642,8 @@ function generateReport(data) {
 
   return {
     generatedAt: new Date().toISOString(),
+    environment: data.environment || {},
+    storage: data.storage || {},
     consoleErrors: data.logs,
     userEvents: data.userEvents || [],
     screencast: data.screencast || [],
@@ -501,23 +659,48 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   if (!attachedTabs[tabId] || attachedTabs[tabId].isPaused) return;
 
   if (method === "Log.entryAdded") {
-    // Capture all logs or just errors? User asked for "all console errors"
-    if (params.entry.level === "error") {
+    // Capture errors and warnings
+    if (['error', 'warning', 'info', 'verbose'].includes(params.entry.level)) {
+      let ts = params.entry.timestamp;
+      if (ts < 100000000000) ts *= 1000; // Convert seconds to ms if needed
+
       attachedTabs[tabId].logs.push({
         type: 'log',
-        ...params.entry
+        ...params.entry,
+        timestamp: ts
       });
     }
   } else if (method === "Runtime.consoleAPICalled") {
-    if (params.type === "error") {
+    // Capture console.error, console.warn, console.assert
+    if (['error', 'warning', 'assert', 'info', 'log', 'debug', 'dir', 'table', 'trace', 'count', 'timeEnd'].includes(params.type)) {
+      let ts = params.timestamp;
+      if (ts < 100000000000) ts *= 1000; // Convert seconds to ms if needed
+
       attachedTabs[tabId].logs.push({
         type: 'console',
-        timestamp: params.timestamp,
-        level: "error",
+        timestamp: ts,
+        level: params.type === 'assert' ? 'error' : params.type,
         text: params.args.map(a => a.value || a.description || JSON.stringify(a)).join(" "),
         stackTrace: params.stackTrace
       });
     }
+  } else if (method === "Runtime.exceptionThrown") {
+    // Capture uncaught exceptions
+    let ts = params.timestamp;
+    if (ts < 100000000000) ts *= 1000;
+
+    const details = params.exceptionDetails;
+    const desc = details.exception && details.exception.description ? details.exception.description : details.text;
+
+    attachedTabs[tabId].logs.push({
+      type: 'exception',
+      source: 'exception',
+      timestamp: ts,
+      level: 'error',
+      text: desc,
+      stackTrace: details.stackTrace,
+      url: details.url
+    });
   } else if (method === "Network.requestWillBeSent") {
     attachedTabs[tabId].network[params.requestId] = {
       requestId: params.requestId,
@@ -531,6 +714,31 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
     if (attachedTabs[tabId].network[params.requestId]) {
       attachedTabs[tabId].network[params.requestId].response = params.response;
       attachedTabs[tabId].network[params.requestId].type = params.type;
+
+      // Synthesize Console Error for HTTP 4xx/5xx
+      if (params.response.status >= 400) {
+        attachedTabs[tabId].logs.push({
+          type: 'network',
+          source: 'network',
+          level: 'error',
+          text: `Failed to load resource: the server responded with a status of ${params.response.status} (${params.response.statusText})`,
+          url: params.response.url,
+          timestamp: Date.now()
+        });
+      }
+    }
+  } else if (method === "Network.loadingFailed") {
+    // Capture network failures (DNS, connection refined, etc)
+    attachedTabs[tabId].logs.push({
+      type: 'network',
+      source: 'network',
+      level: 'error',
+      text: params.errorText || "Network request failed",
+      timestamp: Date.now()
+    });
+
+    if (attachedTabs[tabId].network[params.requestId]) {
+      attachedTabs[tabId].network[params.requestId].errorText = params.errorText;
     }
   } else if (method === "Network.loadingFinished") {
     if (attachedTabs[tabId].network[params.requestId]) {
@@ -656,6 +864,10 @@ async function executeReplay(tabId, events) {
     while (isNavigating && navWait < 15000) { // 15s max wait
       await sleep(100);
       navWait += 100;
+    }
+    // Extra pause after navigation to ensure data fetch
+    if (navWait > 0) {
+      await sleep(3000);
     }
 
     // Execute

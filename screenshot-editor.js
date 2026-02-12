@@ -5,6 +5,18 @@ let ctx = null;
 let originalImg = new Image();
 
 document.addEventListener('DOMContentLoaded', () => {
+    // Load Theme
+    chrome.storage.local.get(['theme'], (result) => {
+        if (result.theme) document.documentElement.setAttribute('data-theme', result.theme);
+    });
+
+    // Sync Theme
+    chrome.storage.onChanged.addListener((changes, namespace) => {
+        if (namespace === 'local' && changes.theme) {
+            document.documentElement.setAttribute('data-theme', changes.theme.newValue);
+        }
+    });
+
     chrome.storage.local.get(['tempScreenshot'], (result) => {
         if (result.tempScreenshot) {
             const { dataUrl, timestamp, highlightBox } = result.tempScreenshot;
@@ -71,6 +83,36 @@ function initCanvas(highlightBox) {
     canvas.width = originalImg.naturalWidth;
     canvas.height = originalImg.naturalHeight;
     ctx.drawImage(originalImg, 0, 0);
+
+    // Dynamic resizing based on image characteristics
+    // Remove default 100% constraint to prevent "too shrinked" look for standard/full-page screenshots
+    // Only constrain very wide landscape screenshots to avoid excessive horizontal scrolling
+    const aspect = originalImg.naturalWidth / originalImg.naturalHeight;
+    if (aspect > 2.0 && originalImg.naturalWidth > 2000) {
+        canvas.style.maxWidth = '100%';
+        canvas.style.height = 'auto';
+    } else {
+        // Allow detail (1:1 or close to it)
+        canvas.style.maxWidth = '100%';
+
+        // If image is moderately large (e.g. 1920px) and container is 1200px, 
+        // we might want to restrict it slightly if it's just a bit over, 
+        // but for "Full Size" usually 1:1 is best.
+        // We'll cap width at 100% of image width (implicit)
+
+        // Ensure standard desktop captures (1920) aren't forced into 1200px
+        canvas.style.width = 'auto';
+        canvas.style.height = 'auto'; // Explicitly allow full height
+
+        // Remove container height restriction to show full image if requested (user implies "shrinked" = clipped/scrollable?)
+        // Actually, "shrinked" usually means SCALED DOWN.
+        // If I remove max-height on container, it grows.
+        // Let's try removing max-height on container to allow full vertical expansion.
+        const container = canvas.closest('.preview-container');
+        if (container) {
+            container.style.maxHeight = 'none';
+        }
+    }
 
     if (highlightBox) {
         ctx.save();
