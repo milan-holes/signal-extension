@@ -564,11 +564,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const onUpdated = (tId, info) => {
         if (tId === tabId && info.status === 'complete') {
           chrome.tabs.onUpdated.removeListener(onUpdated);
-          chrome.debugger.attach({ tabId: tabId }, "1.3", () => {
+          chrome.debugger.attach({ tabId: tabId }, "1.3", async () => {
             if (chrome.runtime.lastError) {
               console.warn("Attach failed:", chrome.runtime.lastError);
               return;
             }
+
+            if (request.context) {
+              await setupReplayEnvironment(tabId, request.context);
+              // Reload to apply storage/cookies fully
+              await sendCommand(tabId, "Page.reload");
+              // Wait for reload (executeReplay has its own warmup, but let's give it a moment)
+              await new Promise(r => setTimeout(r, 2000));
+            }
+
             executeReplay(tabId, request.events);
           });
         }
@@ -580,6 +589,47 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 function generateReport(data) {
+  // Settings for redaction
+  const redactHeaders = (settings.securityHeaders || ['Authorization', 'Cookie', 'Set-Cookie', 'X-Auth-Token', 'Proxy-Authorization']).map(s => s.toLowerCase());
+  const redactStorage = (settings.securityStorage || ['token', 'auth', 'session', 'secret', 'key', 'password', 'user', 'account']).map(s => s.toLowerCase());
+  const redactCookies = (settings.securityCookies || ['JSESSIONID', 'PHPSESSID', 'connect.sid', 'token', 'auth']).map(s => s.toLowerCase());
+
+  // Helper to redact
+  const shouldRedact = (key, list) => list.some(item => key.toLowerCase().includes(item));
+  const REDACTED_VAL = '[REDACTED]';
+
+  // Anonymize Storage
+  const anonymizeStorage = (storageObj) => {
+    if (!storageObj) return {};
+    const clean = {};
+    for (const [k, v] of Object.entries(storageObj)) {
+      if (shouldRedact(k, redactStorage)) {
+        clean[k] = REDACTED_VAL;
+      } else {
+        clean[k] = v;
+      }
+    }
+    return clean;
+  };
+
+  const cleanStorage = {
+    localStorage: anonymizeStorage(data.storage ? data.storage.localStorage : {}),
+    sessionStorage: anonymizeStorage(data.storage ? data.storage.sessionStorage : {}),
+    cookies: {}
+  };
+
+  // Environment Cookies
+  if (data.storage && data.storage.cookies) {
+    cleanStorage.cookies = {};
+    for (const [k, v] of Object.entries(data.storage.cookies)) {
+      if (shouldRedact(k, redactCookies)) {
+        cleanStorage.cookies[k] = REDACTED_VAL;
+      } else {
+        cleanStorage.cookies[k] = v;
+      }
+    }
+  }
+
   // Convert network data to HAR-like format
   const har = {
     log: {
@@ -593,6 +643,25 @@ function generateReport(data) {
       }],
       entries: Object.values(data.network).map(entry => {
         const time = (entry.endTime && entry.startTime) ? (entry.endTime - entry.startTime) * 1000 : 0;
+
+        // Request Headers
+        const requestHeaders = Object.entries(entry.request.headers || {}).map(([k, v]) => {
+          let val = v;
+          if (shouldRedact(k, redactHeaders)) {
+            val = REDACTED_VAL;
+          }
+          return { name: k, value: val };
+        });
+
+        // Response Headers
+        const responseHeaders = Object.entries((entry.response && entry.response.headers) || {}).map(([k, v]) => {
+          let val = v;
+          if (shouldRedact(k, redactHeaders)) {
+            val = REDACTED_VAL;
+          }
+          return { name: k, value: val };
+        });
+
         return {
           _resourceType: entry.type,
           startedDateTime: new Date(entry.wallTime * 1000).toISOString(),
@@ -601,13 +670,7 @@ function generateReport(data) {
             method: entry.request.method,
             url: entry.request.url,
             httpVersion: "HTTP/1.1",
-            headers: Object.entries(entry.request.headers || {}).map(([k, v]) => {
-              let val = v;
-              if (k.toLowerCase() === 'authorization' && typeof v === 'string' && v.trim().toLowerCase().startsWith('bearer ')) {
-                val = 'Bearer [REDACTED]';
-              }
-              return { name: k, value: val };
-            }),
+            headers: requestHeaders,
             queryString: [],
             cookies: [],
             headersSize: -1,
@@ -621,7 +684,7 @@ function generateReport(data) {
             status: entry.response.status,
             statusText: entry.response.statusText,
             httpVersion: entry.response.protocol || "HTTP/1.1",
-            headers: Object.entries(entry.response.headers || {}).map(([k, v]) => ({ name: k, value: v })),
+            headers: responseHeaders,
             cookies: [],
             content: {
               size: entry.encodedDataLength || 0,
@@ -643,10 +706,9 @@ function generateReport(data) {
   return {
     generatedAt: new Date().toISOString(),
     environment: data.environment || {},
-    storage: data.storage || {},
+    storage: cleanStorage,
     consoleErrors: data.logs,
     userEvents: data.userEvents || [],
-    screencast: data.screencast || [],
     screencast: data.screencast || [],
     issues: data.issues || [],
     contentChanges: data.contentChanges || [],
@@ -902,6 +964,87 @@ function showReplayFinished(tabId, count) {
   });
   chrome.tabs.sendMessage(tabId, { action: "setWidgetVisibility", visible: true });
   setTimeout(() => { chrome.debugger.detach({ tabId: tabId }); }, 5000);
+}
+
+async function setupReplayEnvironment(tabId, context) {
+  if (!context) return;
+
+  // Enable domains
+  try {
+    await sendCommand(tabId, "Page.enable");
+    await sendCommand(tabId, "Runtime.enable");
+    await sendCommand(tabId, "DOM.enable");
+    await sendCommand(tabId, "Network.enable");
+  } catch (e) { }
+
+  // 1. Clear Storage if requested
+  if (context.clearStorage) {
+    try {
+      await sendCommand(tabId, "Network.clearBrowserCookies");
+      await sendCommand(tabId, "Runtime.evaluate", {
+        expression: "localStorage.clear(); sessionStorage.clear();"
+      });
+    } catch (e) { console.warn("Clear storage failed", e); }
+  }
+
+  // 2. Set Cookies
+  if (context.cookies) {
+    for (const [key, value] of Object.entries(context.cookies)) {
+      try {
+        await sendCommand(tabId, "Runtime.evaluate", {
+          expression: `document.cookie = "${key}=${value}; path=/";`
+        });
+      } catch (e) { console.error("Cookie set failed", e); }
+    }
+  }
+
+  // 3. Set Local/Session Storage
+  if (context.localStorage) {
+    for (const [key, value] of Object.entries(context.localStorage)) {
+      const val = typeof value === 'string' ? value : JSON.stringify(value);
+      try {
+        await sendCommand(tabId, "Runtime.evaluate", {
+          expression: `localStorage.setItem('${key}', '${val.replace(/'/g, "\\'").replace(/\n/g, "\\n")}');`
+        });
+      } catch (e) { console.error("LocalStorage set failed", e); }
+    }
+  }
+  if (context.sessionStorage) {
+    for (const [key, value] of Object.entries(context.sessionStorage)) {
+      const val = typeof value === 'string' ? value : JSON.stringify(value);
+      try {
+        await sendCommand(tabId, "Runtime.evaluate", {
+          expression: `sessionStorage.setItem('${key}', '${val.replace(/'/g, "\\'").replace(/\n/g, "\\n")}');`
+        });
+      } catch (e) { console.error("SessionStorage set failed", e); }
+    }
+  }
+
+  // 4. Pre-flight Requests
+  if (context.requests && Array.isArray(context.requests)) {
+    for (const req of context.requests) {
+      try {
+        const safeBody = typeof req.body === 'object' ? JSON.stringify(req.body) : req.body;
+        const fetchExpr = `
+                    (async function() {
+                        try {
+                            const res = await fetch("${req.url}", {
+                                method: "${req.method || 'GET'}",
+                                headers: ${JSON.stringify(req.headers || {})},
+                                body: ${req.method === 'GET' ? 'undefined' : JSON.stringify(safeBody)}
+                            });
+                            return { status: res.status };
+                        } catch (e) { return { error: e.toString() }; }
+                    })()
+                `;
+
+        await sendCommand(tabId, "Runtime.evaluate", {
+          expression: fetchExpr,
+          awaitPromise: true
+        });
+      } catch (e) { console.error("Pre-flight request failed", e); }
+    }
+  }
 }
 
 // Helpers

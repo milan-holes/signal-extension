@@ -2,7 +2,62 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.3] - 2026-02-15
+
+### Added
+- **Webhook Sharing**:
+  - New "Share via Webhook" modal for sending reports to external services.
+  - Fully configurable `multipart/form-data` FormData template — users define field names and values via a JSON editor.
+  - `%export%` and `%screenshot%` variables attach the compressed report (.zip) and current screenshot (.jpg) under any field name.
+  - Custom HTTP method, headers, and persisted settings via `localStorage`.
+- **Replay Environment Configuration**:
+  - New Replay Configuration modal with tabbed interface (General, Local Storage, Session Storage, Cookies, Pre-flight Requests).
+  - Inject localStorage, sessionStorage, and cookie key-value pairs before replay begins.
+  - Pre-flight AJAX request builder — define requests (method, URL, headers, body) to execute before replay (e.g., fetch auth tokens).
+  - Storage items pre-populated from the loaded report data.
+  - Option to clear existing storage before injection.
+- **Security & Anonymization**:
+  - New Security tab in popup settings for configuring sensitive data redaction.
+  - Configurable lists of headers, localStorage keys, and cookies to anonymize in exported reports.
+  - Default sensitive keys provided (Authorization, Cookie, Set-Cookie, token, session, etc.) with a "Load Defaults" button.
+  - Report data is automatically redacted before export based on user-configured lists.
+- **Request Composer**:
+  - Built-in HTTP request composer with tabbed interface (Request, Headers, Body, Response).
+  - Support for GET, POST, PUT, DELETE, PATCH methods.
+  - Network entries can be re-sent directly from the network detail panel via "Open in Composer" action.
+  - Response viewer showing status, headers, and body.
+- **Timeline Enhancements**:
+  - Embedded Console and Network sub-tabs within the Timeline view with filtering and search.
+  - Timeline is now the primary tab (visually distinguished in sidebar navigation).
+- **Resizable Detail Panel**:
+  - Details sidebar (Console/Network views) can be resized by dragging its left edge.
+  - Visual resize handle with hover/active highlight, min/max width constraints (280px–70vw).
+- **Click Indicator Customization**:
+  - New color picker for click indicators in popup settings.
+  - Click recording settings visually grouped and disabled when click recording is off.
+- **Settings Redesign**:
+  - Popup settings reorganized into tabbed layout: General, Security, Integrations.
+  - Toggle switches for widget and click visibility with improved styling.
+
+### Improved
+- **Performance**:
+  - `renderConsole` and `renderNetwork` now use `DocumentFragment` for batch DOM insertion, preventing browser freezes on large datasets.
+  - Removed redundant `allEvents` array construction in `renderReport`.
+- **Light Mode**:
+  - Fixed unreadable badge colors (error, warning, success, info) in light mode — now use high-contrast dark text variants.
+  - Applies to both console level badges and network status badges.
+- **Report Import**:
+  - Added support for importing `.zip` report files alongside raw `.json`.
+  - `globalAllEvents` is populated safely even if `renderTimeline` encounters an error.
+- **Empty State**:
+  - Proper empty state messaging when no report is loaded.
+
+### Fixed
+- **Encoding Issues**:
+  - Replaced raw Unicode characters (✓, ✗, —) with HTML entities in webhook status messages to prevent garbled text.
+  - Fixed em-dash encoding in webhook variable legend.
+
+## [1.2]
 
 ### Added
 - **UI & Design**:

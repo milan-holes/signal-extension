@@ -23,7 +23,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const importBtn = document.getElementById('importBtn'); // Opens Viewer now
   const errorMsg = document.getElementById('errorMsg');
 
-  // Settings Inputs
+  // == Settings Inputs ==
   const autoRecordCheckbox = document.getElementById('autoRecordCheckbox');
   const showWidgetCheckbox = document.getElementById('showWidgetCheckbox');
   const showClicksCheckbox = document.getElementById('showClicksCheckbox');
@@ -35,12 +35,28 @@ document.addEventListener('DOMContentLoaded', async () => {
   const jiraTypeInput = document.getElementById('jiraTypeInput');
   const domainsInput = document.getElementById('domainsInput');
   const clickSizeInput = document.getElementById('clickSizeInput');
+  const clickColorInput = document.getElementById('clickColorInput');
+  const clickSettingsContainer = document.getElementById('clickSettingsContainer');
   const themeToggle = document.getElementById('themeToggle');
+
+  // Security Inputs
+  const securityHeadersInput = document.getElementById('securityHeadersInput');
+  const securityStorageInput = document.getElementById('securityStorageInput');
+  const securityCookiesInput = document.getElementById('securityCookiesInput');
+  const loadDefaultsBtn = document.getElementById('loadDefaultsBtn');
+
+  // Toggle Click Settings visibility
+  if (showClicksCheckbox && clickSettingsContainer) {
+    showClicksCheckbox.addEventListener('change', () => {
+      clickSettingsContainer.style.opacity = showClicksCheckbox.checked ? '1' : '0.5';
+      clickSettingsContainer.style.pointerEvents = showClicksCheckbox.checked ? 'auto' : 'none';
+      // Or display none? Opacity is smoother if we had transitions, but let's stick to opacity/disabled look
+    });
+  }
 
   // == Theme Logic ==
   function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
-    // Update icon: Dark theme shows Sun (click to go Light), Light theme shows Moon (click to go Dark)
     const icon = theme === 'dark'
       ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>` // Sun
       : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>`; // Moon
@@ -78,7 +94,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     checkStatus();
   }
 
-  // == Tab Switching Removed ==
+  // == Settings Tab Switching ==
+  document.querySelectorAll('.setting-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      // Remove active from all tabs
+      document.querySelectorAll('.setting-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.settings-content').forEach(c => c.classList.remove('active'));
+
+      // Add active to clicked tab
+      tab.classList.add('active');
+      const target = document.getElementById(`tab-${tab.dataset.tab}`);
+      if (target) target.classList.add('active');
+    });
+  });
 
   // == Settings View ==
   if (settingsBtn) {
@@ -146,11 +174,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             btn.style.pointerEvents = '';
           }
         });
-        // Clear error only if it relates to restriction? Or always?
-        // If there was a previous error (like 'Start Recording' failed), checkStatus usually resets UI.
-        // checkStatus doesn't know about errors unless we store them. 
-        // But here we are in updateUI called by checkStatus or init.
-        // So clearing it here is fine as this is 'reset to default state'
         errorMsg.textContent = "";
       }
     }
@@ -225,7 +248,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // == Screenshot Controls ==
-  // == Screenshot Controls ==
   function sendScreenshotCommand(type) {
     chrome.runtime.sendMessage({ action: "initiateScreenshot", type: type, tabId: currentTabId });
     window.close();
@@ -244,11 +266,58 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // == Settings Logic ==
+  // Default list of sensitive headers to keep (whitelist)
+  // Everything else is potentially redacted if we implement strict mode,
+  // but here user asked for "Anonymize Whitelisted Headers" -> usually means "Only keep these, redact others".
+  // Or "Anonymize specific headers"?
+  // User Prompt: "option to configure whit headers... create and use default list of common sensitive keys to anonymize"
+  // Wait, "configure whit headers" might mean "White list headers"?
+  // And "default list of common sensitive keys to anonymize" might mean blacklist?
+  // Let's interpret:
+  // 1. "Configure whitelist headers" -> The headers we WANT to see.
+  // 2. "Default list of common sensitive keys to anonymize" -> Maybe defaults for the blacklist?
+  // Let's stick to: "Header Whitelist" (keep these, hide others) vs "Header Blacklist".
+  // Usually for security, you blacklist sensitive ones (Auth, Cookie, etc).
+  // But user said "configure whitelist headers". So maybe we only show whitelisted ones?
+  // Let's implement a "Headers to Keep" list.
+
+  const DEFAULT_SENSITIVE_STORAGE = ['token', 'auth', 'session', 'secret', 'key', 'password', 'user', 'account'];
+  const DEFAULT_SENSITIVE_COOKIES = ['JSESSIONID', 'PHPSESSID', 'connect.sid', 'token', 'auth'];
+  // For headers, user mentioned whitelist. Let's assume input is "Headers to Keep".
+  // But typically you just want to redact specific ones.
+  // Re-reading: "option to configure whit headers, localStorage keys, cookies will be anonymized"
+  // Typo "whit" -> probably "whitelist"? Or "with"?
+  // "configure whitelist headers" makes sense.
+  // Left side: "Anonymize Whitelisted Headers"
+  // Wait, if I whitelist "Content-Type", do I anonymize it? No.
+  // I anonymize everything NOT in the whitelist? That's strict.
+  // Or maybe "Headers to Anonymize"?
+  // Let's go with "Headers to Anonymize" based on "localStorage keys... will be anonymized".
+  // So: List of Headers to Redact.
+  // Default: Authorization, Cookie, Set-Cookie.
+
+  const DEFAULT_SENSITIVE_HEADERS = ['Authorization', 'Cookie', 'Set-Cookie', 'X-Auth-Token', 'Proxy-Authorization'];
+
+  if (loadDefaultsBtn) {
+    loadDefaultsBtn.addEventListener('click', () => {
+      securityHeadersInput.value = DEFAULT_SENSITIVE_HEADERS.join(', ');
+      securityStorageInput.value = DEFAULT_SENSITIVE_STORAGE.join(', ');
+      securityCookiesInput.value = DEFAULT_SENSITIVE_COOKIES.join(', ');
+    });
+  }
+
   // Load settings
   chrome.storage.local.get(['settings'], (result) => {
     if (result.settings) {
       if (showWidgetCheckbox) showWidgetCheckbox.checked = result.settings.showWidget !== false;
-      if (showClicksCheckbox) showClicksCheckbox.checked = result.settings.showClicks !== false;
+      if (showClicksCheckbox) {
+        showClicksCheckbox.checked = result.settings.showClicks !== false;
+        // Trigger visibility update
+        if (clickSettingsContainer) {
+          clickSettingsContainer.style.opacity = showClicksCheckbox.checked ? '1' : '0.5';
+          clickSettingsContainer.style.pointerEvents = showClicksCheckbox.checked ? 'auto' : 'none';
+        }
+      }
       if (bufferDurationInput && result.settings.bufferMinutes) bufferDurationInput.value = result.settings.bufferMinutes;
 
       // Update buffer badge
@@ -263,7 +332,23 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (jiraTokenInput && result.settings.jiraToken) jiraTokenInput.value = result.settings.jiraToken;
 
       if (clickSizeInput && result.settings.clickSize) clickSizeInput.value = result.settings.clickSize;
+      if (clickColorInput && result.settings.clickColor) clickColorInput.value = result.settings.clickColor;
+
       if (domainsInput && result.settings.domains) domainsInput.value = result.settings.domains.join('\n');
+
+      // Security
+      if (securityHeadersInput) {
+        const headers = result.settings.securityHeaders || DEFAULT_SENSITIVE_HEADERS;
+        securityHeadersInput.value = Array.isArray(headers) ? headers.join(', ') : headers;
+      }
+      if (securityStorageInput) {
+        const storage = result.settings.securityStorage || DEFAULT_SENSITIVE_STORAGE;
+        securityStorageInput.value = Array.isArray(storage) ? storage.join(', ') : storage;
+      }
+      if (securityCookiesInput) {
+        const cookies = result.settings.securityCookies || DEFAULT_SENSITIVE_COOKIES;
+        securityCookiesInput.value = Array.isArray(cookies) ? cookies.join(', ') : cookies;
+      }
     }
   });
 
@@ -274,17 +359,29 @@ document.addEventListener('DOMContentLoaded', async () => {
         showWidget: showWidgetCheckbox ? showWidgetCheckbox.checked : true,
         showClicks: showClicksCheckbox ? showClicksCheckbox.checked : true,
         clickSize: clickSizeInput ? (parseInt(clickSizeInput.value) || 20) : 20,
+        clickColor: clickColorInput ? clickColorInput.value : '#fa383e',
         domains: domainsInput ? domainsInput.value.split('\n').map(d => d.trim()).filter(d => d) : [],
         bufferMinutes: bufferDurationInput ? (parseInt(bufferDurationInput.value) || 2) : 2,
         jiraType: jiraTypeInput ? jiraTypeInput.value : 'server',
         jiraDomain: jiraDomainInput ? jiraDomainInput.value.trim() : '',
         jiraEmail: jiraEmailInput ? jiraEmailInput.value.trim() : '',
-        jiraToken: jiraTokenInput ? jiraTokenInput.value.trim() : ''
+        jiraToken: jiraTokenInput ? jiraTokenInput.value.trim() : '',
+
+        // Security Settings (store as Arrays)
+        securityHeaders: securityHeadersInput ? securityHeadersInput.value.split(',').map(s => s.trim()).filter(s => s) : [],
+        securityStorage: securityStorageInput ? securityStorageInput.value.split(',').map(s => s.trim()).filter(s => s) : [],
+        securityCookies: securityCookiesInput ? securityCookiesInput.value.split(',').map(s => s.trim()).filter(s => s) : []
       };
+
       chrome.storage.local.set({ settings: settings }, () => {
-        const originalText = saveSettingsBtn.textContent;
-        saveSettingsBtn.textContent = "Saved!";
-        setTimeout(() => saveSettingsBtn.textContent = originalText, 1000);
+        const originalHTML = saveSettingsBtn.innerHTML;
+        saveSettingsBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--success);"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+
+        // Update buffer badge immediately
+        const bufferBadge = document.getElementById('bufferBadge');
+        if (bufferBadge) bufferBadge.textContent = `Buffer: ${settings.bufferMinutes}m`;
+
+        setTimeout(() => saveSettingsBtn.innerHTML = originalHTML, 1000);
 
         // Clean up view
         setTimeout(() => settingsView.classList.add('hidden'), 500);

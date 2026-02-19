@@ -536,56 +536,158 @@
   <!-- SETTINGS OVERLAY -->
   <div id="settingsView" class="settings-view hidden">
     <div class="settings-header">
-      <button class="icon-btn" id="closeSettingsBtn" style="margin-right:8px;">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="19" y1="12" x2="5" y2="12"></line>
-          <polyline points="12 19 5 12 12 5"></polyline>
+      <div style="display:flex; align-items:center;">
+        <button class="icon-btn" id="closeSettingsBtn" style="margin-right:8px;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="19" y1="12" x2="5" y2="12"></line>
+            <polyline points="12 19 5 12 12 5"></polyline>
+          </svg>
+        </button>
+        Settings
+      </div>
+      <button id="saveSettingsBtn" class="action-btn"
+        style="width:auto; padding:8px; margin-left:auto; display:flex; align-items:center; justify-content:center;"
+        title="Save Settings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+          <polyline points="17 21 17 13 7 13 7 21"></polyline>
+          <polyline points="7 3 7 8 15 8"></polyline>
         </svg>
       </button>
-      Settings
     </div>
+
+    <div class="settings-tabs" style="display:flex; border-bottom:1px solid var(--border); background:var(--bg-card);">
+      <button class="setting-tab active" data-tab="general">General</button>
+      <button class="setting-tab" data-tab="security">Security</button>
+      <button class="setting-tab" data-tab="integrations">Integrations</button>
+    </div>
+
     <div class="settings-body">
-      <div class="setting-item">
-        <label class="setting-label" style="display:flex; justify-content:space-between; align-items:center;">
-          Show Widget
-          <label class="switch"><input type="checkbox" id="showWidgetCheckbox"><span class="slider"></span></label>
-        </label>
-      </div>
-      <div class="setting-item">
-        <label class="setting-label" style="display:flex; justify-content:space-between; align-items:center;">
-          Show Clicks
-          <label class="switch"><input type="checkbox" id="showClicksCheckbox"><span class="slider"></span></label>
-        </label>
-      </div>
-      <div class="setting-item">
-        <label class="setting-label">Buffer Duration (mins)</label>
-        <input type="number" id="bufferDurationInput" min="1" max="10">
+      <!-- GENERAL TAB -->
+      <div id="tab-general" class="settings-content active">
+        <div class="setting-item">
+          <label class="setting-label" style="display:flex; justify-content:space-between; align-items:center;">
+            Show Widget
+            <label class="switch"><input type="checkbox" id="showWidgetCheckbox"><span class="slider"></span></label>
+          </label>
+        </div>
+
+        <div class="setting-item">
+          <label class="setting-label" style="display:flex; justify-content:space-between; align-items:center;">
+            Show Clicks
+            <label class="switch"><input type="checkbox" id="showClicksCheckbox"><span class="slider"></span></label>
+          </label>
+        </div>
+
+        <div class="setting-item" id="clickSettingsContainer">
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+            <div>
+              <label class="setting-label">Click Size</label>
+              <select id="clickSizeInput">
+                <option value="10">Small</option>
+                <option value="20" selected>Medium</option>
+                <option value="40">Large</option>
+                <option value="60">Huge</option>
+              </select>
+            </div>
+            <div>
+              <label class="setting-label">Click Color</label>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <input type="color" id="clickColorInput" value="#fa383e"
+                  style="width:100%; height:32px; padding:0; border:var(--border); border-radius:4px; cursor:pointer;">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-item">
+          <label class="setting-label">Buffer Duration (mins)</label>
+          <input type="number" id="bufferDurationInput" min="1" max="10">
+        </div>
       </div>
 
-      <div style="height:1px; background:var(--border); margin:20px 0;"></div>
+      <!-- SECURITY TAB -->
+      <div id="tab-security" class="settings-content">
+        <div class="setting-item">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <label class="setting-label" style="margin-bottom:0;">Headers to Anonymize</label>
+            <button id="loadDefaultsBtn" class="action-btn" style="width:auto; padding:4px 8px; font-size:10px;">Load
+              Defaults</button>
+          </div>
+          <textarea id="securityHeadersInput" placeholder="Content-Type, Authorization, etc."
+            style="height:60px;"></textarea>
+          <div style="font-size:10px; color:var(--text-secondary); margin-top:4px;">Comma separated keys to REDACT
+            (values will be hidden).</div>
+        </div>
 
-      <div style="font-size:12px; font-weight:700; color:var(--text-main); margin-bottom:12px;">Jira Integration</div>
-      <div class="setting-item">
-        <label class="setting-label">Domain</label>
-        <input type="text" id="jiraDomainInput" placeholder="company.atlassian.net">
+        <div class="setting-item">
+          <label class="setting-label">Anonymize LocalStorage Keys</label>
+          <textarea id="securityStorageInput" placeholder="token, auth, secret..." style="height:60px;"></textarea>
+          <div style="font-size:10px; color:var(--text-secondary); margin-top:4px;">Comma separated keys to REDACT.
+          </div>
+        </div>
+
+        <div class="setting-item">
+          <label class="setting-label">Anonymize Cookies</label>
+          <textarea id="securityCookiesInput" placeholder="session_id, token..." style="height:60px;"></textarea>
+          <div style="font-size:10px; color:var(--text-secondary); margin-top:4px;">Comma separated keys to REDACT.
+          </div>
+        </div>
       </div>
-      <div class="setting-item">
-        <label class="setting-label">Email</label>
-        <input type="text" id="jiraEmailInput" placeholder="email@example.com">
-      </div>
-      <div class="setting-item">
-        <label class="setting-label">API Token</label>
-        <input type="password" id="jiraTokenInput">
+
+      <!-- INTEGRATIONS TAB -->
+      <div id="tab-integrations" class="settings-content">
+        <div style="font-size:12px; font-weight:700; color:var(--text-main); margin-bottom:12px;">Jira Integration</div>
+        <div class="setting-item">
+          <label class="setting-label">Domain</label>
+          <input type="text" id="jiraDomainInput" placeholder="company.atlassian.net">
+        </div>
+        <div class="setting-item">
+          <label class="setting-label">Email</label>
+          <input type="text" id="jiraEmailInput" placeholder="email@example.com">
+        </div>
+        <div class="setting-item">
+          <label class="setting-label">API Token</label>
+          <input type="password" id="jiraTokenInput">
+        </div>
       </div>
 
       <!-- Hidden fields -->
       <input type="hidden" id="jiraTypeInput" value="server">
       <textarea id="domainsInput" class="hidden"></textarea>
-      <input type="hidden" id="clickSizeInput" value="20">
-
-      <button id="saveSettingsBtn" class="action-btn" style="margin-top:10px;">Save Settings</button>
     </div>
   </div>
+
+  <style>
+    /* Tab Styles */
+    .setting-tab {
+      flex: 1;
+      background: transparent;
+      border: none;
+      padding: 10px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .setting-tab.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+      background: var(--bg-hover);
+    }
+
+    .settings-content {
+      display: none;
+      padding-top: 10px;
+    }
+
+    .settings-content.active {
+      display: block;
+    }
+  </style>
 
   <!-- Footer -->
   <footer class="footer">

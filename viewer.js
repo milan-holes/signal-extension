@@ -1,6 +1,10 @@
 let currentReportData = null;
 let currentConsoleSort = { key: 'time', dir: 'asc' };
 let currentNetworkSort = { key: 'start', dir: 'asc' };
+let isEditorMode = false;
+let globalAllEvents = [];
+let currentScreencastIndex = 0; // Sync between timeline and player
+let pauseScreencast = null; // Global function to pause playback from outside renderScreencast
 
 document.addEventListener('DOMContentLoaded', () => {
   // Theme Toggle
@@ -45,13 +49,75 @@ document.addEventListener('DOMContentLoaded', () => {
   const replayBtn = document.getElementById('replayBtn');
   const fileInput = document.getElementById('fileInput');
   const reportDateSpan = document.getElementById('reportDate'); // New ID
+  const editorModeBtn = document.getElementById('editorModeBtn');
+
+  if (editorModeBtn) {
+    editorModeBtn.addEventListener('click', () => {
+      isEditorMode = !isEditorMode;
+      if (isEditorMode) {
+        editorModeBtn.classList.add('primary');
+        editorModeBtn.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            Done Editing
+        `;
+      } else {
+        editorModeBtn.classList.remove('primary');
+        editorModeBtn.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+            Editor Mode
+        `;
+      }
+      if (currentReportData) renderReport(currentReportData);
+    });
+  }
 
   if (importBtn) importBtn.addEventListener('click', () => fileInput.click());
+
+  // Helper for Tabs in Replay Modal
+  const replayTabs = document.querySelectorAll('#replayConfigModal .composer-tab');
+  replayTabs.forEach(tab => {
+    tab.addEventListener('click', (e) => {
+      e.stopPropagation(); // Prevent bubbling just in case
+      // Remove active from all tabs in this modal
+      replayTabs.forEach(t => t.classList.remove('active'));
+
+      // Remove active from all panels in this modal
+      document.querySelectorAll('#replayConfigModal .composer-panel').forEach(p => p.classList.remove('active'));
+
+      // Activate clicked tab
+      tab.classList.add('active');
+
+      // Activate target panel
+      const targetId = `replay-${tab.dataset.tab}`;
+      const target = document.getElementById(targetId);
+      if (target) {
+        target.classList.add('active');
+      } else {
+        console.error(`Target panel not found: ${targetId}`);
+      }
+    });
+  });
+
+  const replayConfigModal = document.getElementById('replayConfigModal');
+  const closeReplayConfigBtn = document.getElementById('closeReplayConfigBtn');
+  const startReplayBtn = document.getElementById('startReplayBtn');
+
+  if (closeReplayConfigBtn) closeReplayConfigBtn.addEventListener('click', () => replayConfigModal.style.display = 'none');
 
   if (replayBtn) replayBtn.addEventListener('click', () => {
     if (!currentReportData || !currentReportData.userEvents) return;
 
-    // Sort events by timestamp to ensure correct start URL finding
+    if (!currentReportData.userEvents.length) {
+      alert("No events to replay.");
+      return;
+    }
+
+    // Sort events
     const events = [...currentReportData.userEvents].sort((a, b) => a.timestamp - b.timestamp);
 
     // Find URL
@@ -59,23 +125,273 @@ document.addEventListener('DOMContentLoaded', () => {
     const nav = events.find(e => e.type === 'navigation');
     if (nav) startUrl = nav.url;
 
-    if (!startUrl) {
-      startUrl = prompt("Enter URL to replay on:", "https://");
-    }
-    if (!startUrl) return;
+    // Populate Modal
+    const urlInput = document.getElementById('replayUrlInput');
+    const localInput = document.getElementById('replayLocalStorage');
+    const sessionInput = document.getElementById('replaySessionStorage');
+    const cookiesInput = document.getElementById('replayCookies');
+    const requestsInput = document.getElementById('replayRequestsInput');
 
-    if (!events.length) {
-      alert("No events to replay.");
-      return;
+    if (urlInput) urlInput.value = startUrl || "";
+
+    // Pre-fill storage from report if available
+    let storage = currentReportData.storage || {};
+
+    // Clear lists
+    ['storageListLocal', 'storageListSession', 'storageListCookies', 'requestList'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = '';
+    });
+
+    if (storage.localStorage) {
+      Object.entries(storage.localStorage).forEach(([k, v]) => addStorageRow('storageListLocal', k, typeof v === 'string' ? v : JSON.stringify(v)));
+    }
+    if (storage.sessionStorage) {
+      Object.entries(storage.sessionStorage).forEach(([k, v]) => addStorageRow('storageListSession', k, typeof v === 'string' ? v : JSON.stringify(v)));
+    }
+    if (storage.cookies) {
+      Object.entries(storage.cookies).forEach(([k, v]) => addStorageRow('storageListCookies', k, typeof v === 'string' ? v : JSON.stringify(v)));
     }
 
-    if (confirm(`Replay ${events.length} events on ${startUrl}?`)) {
-      chrome.runtime.sendMessage({
-        action: "replayEvents",
-        url: startUrl,
-        events: events
+    // Show Modal
+    if (replayConfigModal) replayConfigModal.style.display = 'flex';
+  });
+
+  // Storage Builder Logic
+  function addStorageRow(containerId, key = '', value = '') {
+    const list = document.getElementById(containerId);
+    if (!list) return;
+
+    const div = document.createElement('div');
+    div.className = 'storage-item';
+    div.style.cssText = "display:flex; align-items:flex-start; gap:10px; padding:10px; border-bottom:1px solid var(--border-color); background:var(--bg-card); border-radius:6px; margin-bottom:8px; border:1px solid var(--border-color);";
+
+    // Input Wrapper
+    const inputsDiv = document.createElement('div');
+    inputsDiv.style.cssText = "display:flex; flex-direction:column; gap:8px; flex:1; width:100%;";
+
+    const keyInput = document.createElement('input');
+    keyInput.type = 'text';
+    keyInput.className = 'form-input';
+    keyInput.style.cssText = "font-family:monospace; font-size:12px; padding:8px; width:100%; box-sizing:border-box;";
+    keyInput.placeholder = "Key";
+    keyInput.value = key;
+
+    const valInput = document.createElement('textarea');
+    valInput.className = 'form-input';
+    valInput.style.cssText = "font-family:monospace; font-size:12px; min-height:60px; padding:8px; resize:vertical; width:100%; box-sizing:border-box;";
+    valInput.placeholder = "Value";
+    valInput.value = value;
+
+    inputsDiv.appendChild(keyInput);
+    inputsDiv.appendChild(valInput);
+    div.appendChild(inputsDiv);
+
+    // Remove Button (Trash)
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'action-btn';
+    removeBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`;
+    removeBtn.style.cssText = "padding:8px; flex-shrink:0; color:var(--text-secondary); border-color:var(--border-color); width:34px; height:34px; display:flex; align-items:center; justify-content:center;";
+    removeBtn.title = "Remove Item";
+
+    removeBtn.addEventListener('mouseenter', () => {
+      removeBtn.style.color = 'var(--danger)';
+      removeBtn.style.borderColor = 'var(--danger)';
+      removeBtn.style.background = 'rgba(250, 56, 62, 0.1)';
+    });
+
+    removeBtn.addEventListener('mouseleave', () => {
+      removeBtn.style.color = 'var(--text-secondary)';
+      removeBtn.style.borderColor = 'var(--border-color)';
+      removeBtn.style.background = 'transparent';
+    });
+
+    removeBtn.onclick = () => div.remove();
+    div.appendChild(removeBtn);
+
+    list.appendChild(div);
+  }
+
+  ['addLocalBtn', 'addSessionBtn', 'addCookieBtn'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) {
+      btn.addEventListener('click', () => {
+        const type = id === 'addLocalBtn' ? 'storageListLocal' : (id === 'addSessionBtn' ? 'storageListSession' : 'storageListCookies');
+        addStorageRow(type);
       });
     }
+  });
+
+  // Request Builder Logic
+  const addReplayRequestBtn = document.getElementById('addReplayRequestBtn');
+  const requestList = document.getElementById('requestList');
+
+  if (addReplayRequestBtn) {
+    addReplayRequestBtn.addEventListener('click', () => {
+      addRequestRow();
+    });
+  }
+
+  function addRequestRow(data = {}) {
+    if (!requestList) return;
+    const div = document.createElement('div');
+    div.className = 'request-item';
+    div.style.cssText = "display:flex; gap:10px; align-items:flex-start; padding:10px; border:1px solid var(--border-color); border-radius:4px; margin-bottom:10px; background:var(--bg-card);";
+
+    // Inputs Wrapper
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = "display:flex; flex-direction:column; gap:8px; flex:1; min-width:0;";
+
+    // Method & URL Row
+    const row1 = document.createElement('div');
+    row1.style.cssText = "display:flex; gap:10px;";
+
+    const methodSelect = document.createElement('select');
+    methodSelect.className = 'form-input';
+    methodSelect.style.flex = "0 0 80px";
+    ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = m;
+      if (data.method === m) opt.selected = true;
+      methodSelect.appendChild(opt);
+    });
+
+    const urlInput = document.createElement('input');
+    urlInput.type = "text";
+    urlInput.className = 'form-input';
+    urlInput.style.flex = "1";
+    urlInput.placeholder = "https://api.example.com/...";
+    if (data.url) urlInput.value = data.url;
+
+    row1.appendChild(methodSelect);
+    row1.appendChild(urlInput);
+    wrapper.appendChild(row1);
+
+    // Headers & Body Row
+    const row2 = document.createElement('div');
+    row2.style.cssText = "display:flex; gap:10px;";
+
+    const headersInput = document.createElement('textarea');
+    headersInput.className = 'form-input';
+    headersInput.style.cssText = "flex:1; height:60px; font-family:monospace; font-size:12px;";
+    headersInput.placeholder = "Headers (Key: Value)";
+    if (data.headers) {
+      headersInput.value = Object.entries(data.headers).map(([k, v]) => `${k}: ${v}`).join('\n');
+    }
+
+    const bodyInput = document.createElement('textarea');
+    bodyInput.className = 'form-input';
+    bodyInput.style.cssText = "flex:1; height:60px; font-family:monospace; font-size:12px;";
+    bodyInput.placeholder = "Body (JSON or Text)";
+    if (data.body) bodyInput.value = data.body;
+
+    row2.appendChild(headersInput);
+    row2.appendChild(bodyInput);
+    wrapper.appendChild(row2);
+
+    div.appendChild(wrapper);
+
+    // Remove Button (Trash)
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'action-btn';
+    removeBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`;
+    removeBtn.style.cssText = "padding:8px; flex-shrink:0; color:var(--text-secondary); border-color:var(--border-color); width:34px; height:34px; display:flex; align-items:center; justify-content:center;";
+    removeBtn.title = "Remove Request";
+
+    removeBtn.addEventListener('mouseenter', () => {
+      removeBtn.style.color = 'var(--danger)';
+      removeBtn.style.borderColor = 'var(--danger)';
+      removeBtn.style.background = 'rgba(250, 56, 62, 0.1)';
+    });
+
+    removeBtn.addEventListener('mouseleave', () => {
+      removeBtn.style.color = 'var(--text-secondary)';
+      removeBtn.style.borderColor = 'var(--border-color)';
+      removeBtn.style.background = 'transparent';
+    });
+
+    removeBtn.onclick = () => div.remove();
+    div.appendChild(removeBtn);
+
+    requestList.appendChild(div);
+  }
+
+  if (startReplayBtn) startReplayBtn.addEventListener('click', () => {
+    const url = document.getElementById('replayUrlInput').value.trim();
+    const clearStorage = document.getElementById('replayClearStorageCheck').checked;
+
+    let localStorageData = {};
+    let sessionStorageData = {};
+    let cookiesData = {};
+    let requests = [];
+
+    // Gather Storage Data
+    const gatherStorage = (listId) => {
+      const data = {};
+      const items = document.querySelectorAll(`#${listId} .storage-item`);
+      items.forEach(item => {
+        const key = item.querySelector('input').value.trim();
+        const val = item.querySelector('textarea').value;
+        if (key) data[key] = val;
+      });
+      return data;
+    };
+
+    localStorageData = gatherStorage('storageListLocal');
+    sessionStorageData = gatherStorage('storageListSession');
+    cookiesData = gatherStorage('storageListCookies');
+
+    // Gather Requests from Builder
+    try {
+      const items = document.querySelectorAll('#requestList .request-item');
+      items.forEach(item => {
+        const method = item.querySelector('select').value;
+        const urlIn = item.querySelector('input').value.trim();
+        const headersText = item.querySelectorAll('textarea')[0].value.trim();
+        const bodyText = item.querySelectorAll('textarea')[1].value.trim(); // Assume second is body
+
+        if (!urlIn) return; // Skip empty URL
+
+        const headers = {};
+        if (headersText) {
+          headersText.split('\n').forEach(line => {
+            const parts = line.split(':');
+            if (parts.length >= 2) {
+              headers[parts[0].trim()] = parts.slice(1).join(':').trim();
+            }
+          });
+        }
+
+        requests.push({
+          method: method,
+          url: urlIn,
+          headers: headers,
+          body: bodyText
+        });
+      });
+    } catch (e) { alert("Error parsing requests: " + e.message); return; }
+
+    if (!url) { alert("URL is required"); return; }
+
+    // Get events again
+    if (!currentReportData || !currentReportData.userEvents) return;
+    const events = [...currentReportData.userEvents].sort((a, b) => a.timestamp - b.timestamp);
+
+    chrome.runtime.sendMessage({
+      action: "replayEvents",
+      url: url,
+      events: events,
+      context: {
+        clearStorage: clearStorage,
+        localStorage: localStorageData,
+        sessionStorage: sessionStorageData,
+        cookies: cookiesData,
+        requests: requests
+      }
+    });
+
+    replayConfigModal.style.display = 'none';
   });
 
   const jiraBtn = document.getElementById('jiraBtn');
@@ -101,32 +417,399 @@ document.addEventListener('DOMContentLoaded', () => {
   // Download logic
   if (downloadBtn) downloadBtn.addEventListener('click', () => {
     if (!currentReportData) return;
-    const blob = new Blob([JSON.stringify(currentReportData, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `debug-report-${new Date().toISOString()}.json`;
-    a.click();
+
+    const originalText = downloadBtn.innerHTML;
+    // Ensure keyframes exist for simple spin if not present
+    if (!document.getElementById('spin-style')) {
+      const style = document.createElement('style');
+      style.id = 'spin-style';
+      style.textContent = `@keyframes spin { 100% { transform: rotate(360deg); } }`;
+      document.head.appendChild(style);
+    }
+
+    downloadBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite; margin-right: 6px;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Exporting...`;
+    downloadBtn.disabled = true;
+
+    // Use setTimeout to allow UI update before heavy sync work (JSON.stringify)
+    setTimeout(() => {
+      try {
+        // Auto-save pending Environment Description
+        const envDescInput = document.querySelector('.env-desc-input');
+        if (envDescInput) {
+          if (!currentReportData.environment) currentReportData.environment = {};
+          if (!currentReportData.environment.Context) currentReportData.environment.Context = {};
+          currentReportData.environment.Context['Issue Description'] = envDescInput.value;
+        }
+
+        // Auto-save open Storage Editors
+        const openStorageEditors = document.querySelectorAll('#storageTable textarea');
+        if (openStorageEditors.length > 0) {
+          const activeChip = document.querySelector('#storage .filter-chip.active');
+          const type = activeChip ? activeChip.dataset.storageType : 'local';
+
+          let storeTarget = null;
+          if (currentReportData.storage) {
+            if (type === 'local') storeTarget = currentReportData.storage.localStorage;
+            else if (type === 'session') storeTarget = currentReportData.storage.sessionStorage;
+            else if (type === 'cookies') storeTarget = currentReportData.storage.cookies;
+          }
+
+          if (storeTarget) {
+            openStorageEditors.forEach(editor => {
+              const row = editor.closest('tr');
+              if (row) {
+                const keyCell = row.firstElementChild;
+                if (keyCell) {
+                  const key = keyCell.innerText;
+                  storeTarget[key] = editor.value;
+                }
+              }
+            });
+          }
+        }
+
+        if (typeof JSZip !== 'undefined') {
+          const zip = new JSZip();
+          // Minify JSON by removing indentation
+          const jsonStr = JSON.stringify(currentReportData);
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+          const filename = `debug-report-${timestamp}.json`;
+
+          zip.file(filename, jsonStr);
+
+          // Compress
+          zip.generateAsync({
+            type: "blob",
+            compression: "DEFLATE",
+            compressionOptions: { level: 9 }
+          }).then(function (content) {
+            const url = URL.createObjectURL(content);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `debug-report-${timestamp}.zip`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 100);
+
+            // Restore
+            downloadBtn.innerHTML = originalText;
+            downloadBtn.disabled = false;
+          }).catch(err => {
+            console.error("Zip generation failed:", err);
+            alert("Export failed: " + err.message);
+            downloadBtn.innerHTML = originalText;
+            downloadBtn.disabled = false;
+          });
+        } else {
+          // Fallback if JSZip missing
+          const blob = new Blob([JSON.stringify(currentReportData, null, 2)], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `debug-report-${new Date().toISOString()}.json`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(url), 100);
+
+          downloadBtn.innerHTML = originalText;
+          downloadBtn.disabled = false;
+        }
+      } catch (e) {
+        console.error("Export failed:", e);
+        alert("Export failed: " + e.message);
+        downloadBtn.innerHTML = originalText;
+        downloadBtn.disabled = false;
+      }
+    }, 50);
   });
+
+  // --- Share via Webhook ---
+  const shareBtn = document.getElementById('shareBtn');
+  const webhookModal = document.getElementById('webhookModal');
+  const closeWebhookBtn = document.getElementById('closeWebhookBtn');
+  const sendWebhookBtn = document.getElementById('sendWebhookBtn');
+  const webhookUrl = document.getElementById('webhookUrl');
+  const webhookMethod = document.getElementById('webhookMethod');
+  const webhookHeaders = document.getElementById('webhookHeaders');
+  const webhookPayload = document.getElementById('webhookPayload');
+  const webhookStatus = document.getElementById('webhookStatus');
+
+  // Load saved webhook settings from localStorage
+  if (webhookUrl) webhookUrl.value = localStorage.getItem('signal_webhook_url') || '';
+  if (webhookMethod) webhookMethod.value = localStorage.getItem('signal_webhook_method') || 'POST';
+  if (webhookHeaders) webhookHeaders.value = localStorage.getItem('signal_webhook_headers') || '';
+  if (webhookPayload) webhookPayload.value = localStorage.getItem('signal_webhook_payload') || '{\n  "file": "%export%",\n  "screenshot": "%screenshot%",\n  "text": "New debug report"\n}';
+
+  if (shareBtn) {
+    shareBtn.addEventListener('click', () => {
+      if (!currentReportData) {
+        alert('No report loaded. Import a report first.');
+        return;
+      }
+      if (webhookModal) webhookModal.style.display = 'flex';
+      if (webhookStatus) webhookStatus.style.display = 'none';
+    });
+  }
+
+  if (closeWebhookBtn) {
+    closeWebhookBtn.addEventListener('click', () => {
+      if (webhookModal) webhookModal.style.display = 'none';
+    });
+  }
+
+  if (webhookModal) {
+    webhookModal.addEventListener('click', (e) => {
+      if (e.target === webhookModal) webhookModal.style.display = 'none';
+    });
+  }
+
+  if (sendWebhookBtn) {
+    sendWebhookBtn.addEventListener('click', async () => {
+      const url = webhookUrl ? webhookUrl.value.trim() : '';
+      if (!url) {
+        alert('Please enter a webhook URL.');
+        webhookUrl.focus();
+        return;
+      }
+
+      if (!currentReportData) {
+        alert('No report data to send.');
+        return;
+      }
+
+      // Save settings to localStorage
+      localStorage.setItem('signal_webhook_url', url);
+      localStorage.setItem('signal_webhook_method', webhookMethod ? webhookMethod.value : 'POST');
+      localStorage.setItem('signal_webhook_headers', webhookHeaders ? webhookHeaders.value : '');
+      localStorage.setItem('signal_webhook_payload', webhookPayload ? webhookPayload.value : '');
+
+      const templateText = webhookPayload ? webhookPayload.value.trim() : '';
+      if (!templateText) {
+        alert('Please define FormData fields.');
+        webhookPayload.focus();
+        return;
+      }
+
+      // Parse the template JSON
+      let fields;
+      try {
+        fields = JSON.parse(templateText);
+        if (typeof fields !== 'object' || Array.isArray(fields)) {
+          throw new Error('Must be a JSON object (key-value pairs).');
+        }
+      } catch (parseErr) {
+        alert('Invalid JSON in FormData fields: ' + parseErr.message);
+        webhookPayload.focus();
+        return;
+      }
+
+      // Parse custom headers (skip Content-Type — browser sets multipart boundary)
+      const headers = {};
+      if (webhookHeaders && webhookHeaders.value.trim()) {
+        webhookHeaders.value.trim().split('\n').forEach(line => {
+          const colonIndex = line.indexOf(':');
+          if (colonIndex > 0) {
+            const key = line.substring(0, colonIndex).trim();
+            const val = line.substring(colonIndex + 1).trim();
+            if (key && key.toLowerCase() !== 'content-type') headers[key] = val;
+          }
+        });
+      }
+
+      // Show loading state
+      const originalBtnText = sendWebhookBtn.innerHTML;
+      sendWebhookBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite; margin-right: 8px;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Preparing...`;
+      sendWebhookBtn.disabled = true;
+
+      // Ensure spin keyframe
+      if (!document.getElementById('spin-style')) {
+        const style = document.createElement('style');
+        style.id = 'spin-style';
+        style.textContent = `@keyframes spin { 100% { transform: rotate(360deg); } }`;
+        document.head.appendChild(style);
+      }
+
+      try {
+        const formData = new FormData();
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        const attachedParts = [];
+
+        for (const [fieldName, fieldValue] of Object.entries(fields)) {
+          const val = String(fieldValue).trim();
+
+          if (val === '%export%') {
+            // Attach compressed zip as file
+            if (typeof JSZip !== 'undefined') {
+              const zip = new JSZip();
+              const jsonStr = JSON.stringify(currentReportData);
+              zip.file(`debug-report-${ts}.json`, jsonStr);
+              const zipBlob = await zip.generateAsync({
+                type: 'blob',
+                compression: 'DEFLATE',
+                compressionOptions: { level: 9 }
+              });
+              formData.append(fieldName, zipBlob, `debug-report-${ts}.zip`);
+            } else {
+              const jsonBlob = new Blob([JSON.stringify(currentReportData)], { type: 'application/json' });
+              formData.append(fieldName, jsonBlob, `debug-report-${ts}.json`);
+            }
+            attachedParts.push(fieldName + ' (export)');
+
+          } else if (val === '%screenshot%') {
+            // Attach current screenshot as file
+            const screenPlayer = document.getElementById('screenPlayer');
+            if (screenPlayer && screenPlayer.src && screenPlayer.src.startsWith('data:image')) {
+              const dataUrl = screenPlayer.src;
+              const byteString = atob(dataUrl.split(',')[1]);
+              const mimeType = dataUrl.split(',')[0].split(':')[1].split(';')[0];
+              const ab = new ArrayBuffer(byteString.length);
+              const ia = new Uint8Array(ab);
+              for (let i = 0; i < byteString.length; i++) {
+                ia[i] = byteString.charCodeAt(i);
+              }
+              const screenshotBlob = new Blob([ab], { type: mimeType });
+              formData.append(fieldName, screenshotBlob, `screenshot-${ts}.jpg`);
+              attachedParts.push(fieldName + ' (screenshot)');
+            } else {
+              attachedParts.push(fieldName + ' (no screenshot available)');
+            }
+
+          } else {
+            // Plain text field
+            formData.append(fieldName, val);
+            attachedParts.push(fieldName);
+          }
+        }
+
+        sendWebhookBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite; margin-right: 8px;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Sending...`;
+
+        const method = webhookMethod ? webhookMethod.value : 'POST';
+        const res = await fetch(url, {
+          method: method,
+          headers: headers,
+          body: formData
+        });
+
+        if (webhookStatus) {
+          webhookStatus.style.display = 'block';
+          if (res.ok) {
+            webhookStatus.style.background = 'rgba(74, 222, 128, 0.1)';
+            webhookStatus.style.border = '1px solid rgba(74, 222, 128, 0.3)';
+            webhookStatus.style.color = 'var(--success)';
+            webhookStatus.innerHTML = `&#10003; Sent successfully &mdash; ${res.status} ${res.statusText}<br><span style="font-size:11px; opacity:0.8;">Fields: ${attachedParts.join(', ')}</span>`;
+          } else {
+            const errText = await res.text().catch(() => '');
+            webhookStatus.style.background = 'rgba(248, 113, 113, 0.1)';
+            webhookStatus.style.border = '1px solid rgba(248, 113, 113, 0.3)';
+            webhookStatus.style.color = 'var(--danger)';
+            webhookStatus.innerHTML = `&#10007; Failed &mdash; ${res.status} ${res.statusText}${errText ? '<br><span style="font-size:11px; opacity:0.8;">' + escapeHtml(errText.substring(0, 200)) + '</span>' : ''}`;
+          }
+        }
+      } catch (e) {
+        if (webhookStatus) {
+          webhookStatus.style.display = 'block';
+          webhookStatus.style.background = 'rgba(248, 113, 113, 0.1)';
+          webhookStatus.style.border = '1px solid rgba(248, 113, 113, 0.3)';
+          webhookStatus.style.color = 'var(--danger)';
+          webhookStatus.innerHTML = `&#10007; Error: ${escapeHtml(e.message)}`;
+        }
+      } finally {
+        sendWebhookBtn.innerHTML = originalBtnText;
+        sendWebhookBtn.disabled = false;
+      }
+    });
+  }
 
   if (fileInput) fileInput.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     reportDateSpan.textContent = "Loading...";
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const data = JSON.parse(event.target.result);
-        renderReport(data);
-      } catch (err) {
-        alert("Invalid JSON file");
-        reportDateSpan.textContent = "";
+
+    // Loading State
+    const importBtnHeader = document.getElementById('importBtn');
+    const importBtnMain = document.getElementById('mainImportBtn');
+
+    let originalHeaderHTML = '';
+    let originalMainHTML = '';
+
+    if (importBtnHeader) {
+      originalHeaderHTML = importBtnHeader.innerHTML;
+      importBtnHeader.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite; margin-right: 6px;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Importing...`;
+      importBtnHeader.disabled = true;
+    }
+    if (importBtnMain) {
+      originalMainHTML = importBtnMain.innerHTML;
+      importBtnMain.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite; margin-right: 6px;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Importing...`;
+      importBtnMain.disabled = true;
+    }
+
+    const resetButtons = () => {
+      if (importBtnHeader) {
+        importBtnHeader.innerHTML = originalHeaderHTML;
+        importBtnHeader.disabled = false;
       }
+      if (importBtnMain) {
+        importBtnMain.innerHTML = originalMainHTML;
+        importBtnMain.disabled = false;
+      }
+      fileInput.value = '';
     };
-    reader.readAsText(file);
+
+    setTimeout(() => {
+      // Handle ZIP files if JSZip is available
+      if ((file.name.endsWith('.zip') || file.type.includes('zip')) && typeof JSZip !== 'undefined') {
+        new JSZip().loadAsync(file).then(function (zip) {
+          // Find the first JSON file inside
+          const jsonFiles = Object.keys(zip.files).filter(name => name.endsWith('.json') && !name.startsWith('__MACOSX'));
+          if (jsonFiles.length > 0) {
+            const targetFile = jsonFiles[0];
+            console.log("Parsing ZIP entry:", targetFile);
+            zip.file(targetFile).async("string").then(function (content) {
+              try {
+                const data = JSON.parse(content);
+                renderReport(data);
+                resetButtons();
+              } catch (err) {
+                console.error("JSON parse error in " + targetFile, err);
+                alert("Invalid JSON file inside ZIP (" + targetFile + "): " + err.message);
+                reportDateSpan.textContent = "";
+                resetButtons();
+              }
+            });
+          } else {
+            alert("No JSON file found in ZIP archive");
+            reportDateSpan.textContent = "";
+            resetButtons();
+          }
+        }, function (e) {
+          alert("Error reading ZIP file: " + e.message);
+          reportDateSpan.textContent = "";
+          resetButtons();
+        });
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const data = JSON.parse(event.target.result);
+          renderReport(data);
+          resetButtons();
+        } catch (err) {
+          alert("Invalid JSON file");
+          reportDateSpan.textContent = "";
+          resetButtons();
+        }
+      };
+      reader.onerror = () => resetButtons();
+      reader.readAsText(file);
+    }, 50);
   });
 
+  // Check for existing data in storage (optional, if passed from popup in future)
   // Check for existing data in storage (optional, if passed from popup in future)
   chrome.storage.local.get('viewerData', (result) => {
     const data = result.viewerData;
@@ -139,11 +822,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  function showEmptyState() {
-    // Optional: Improve empty state visual
-    const msg = `<div style="text-align:center; padding: 40px; color: var(--text-secondary); font-size: 14px;">No report loaded. Click "Import Report" to view data.</div>`;
-    document.querySelectorAll('tbody').forEach(el => el.innerHTML = `<tr><td colspan="10">${msg}</td></tr>`);
-  }
+  const mainImportBtn = document.getElementById('mainImportBtn');
+  if (mainImportBtn) mainImportBtn.addEventListener('click', () => fileInput.click());
 
   // Tab switching logic
   document.querySelectorAll('.tab-btn').forEach(tab => {
@@ -186,8 +866,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Filter Chips Logic
-  document.querySelectorAll('.filter-chip').forEach(chip => {
+  // Filter Chips Logic (only main console/network screens, not timeline panels)
+  document.querySelectorAll('#network .filter-chip, #console .filter-chip').forEach(chip => {
     chip.addEventListener('click', () => {
       const parent = chip.parentElement;
       const isNetwork = chip.closest('#network');
@@ -302,40 +982,170 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Resizable Detail Panel
   const detailPanel = document.getElementById('detailPanel');
-  if (detailPanel) {
-    const resizer = document.createElement('div');
-    resizer.className = 'resizer';
-    Object.assign(resizer.style, {
-      width: '8px',
-      cursor: 'col-resize',
-      position: 'absolute',
-      top: '0',
-      bottom: '0',
-      left: '-4px', // Center over the border
-      zIndex: '100'
-    });
-    detailPanel.appendChild(resizer);
-
-    resizer.addEventListener('mousedown', (e) => {
+  const detailResizeHandle = document.getElementById('detailResizeHandle');
+  if (detailPanel && detailResizeHandle) {
+    detailResizeHandle.addEventListener('mousedown', (e) => {
       e.preventDefault();
       const startX = e.clientX;
-      const startWidth = parseInt(window.getComputedStyle(detailPanel).width, 10);
+      const startWidth = detailPanel.offsetWidth;
+      detailResizeHandle.classList.add('active');
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'col-resize';
 
-      function doDrag(e) {
-        // Calculate new width (dragging LEFT increases width)
+      function onDrag(e) {
+        // Dragging left increases width (panel is on the right)
         const newWidth = startWidth - (e.clientX - startX);
-        if (newWidth > 300 && newWidth < window.innerWidth - 100) {
-          detailPanel.style.width = newWidth + 'px';
+        const minW = 280;
+        const maxW = window.innerWidth * 0.7;
+        detailPanel.style.width = Math.max(minW, Math.min(maxW, newWidth)) + 'px';
+      }
+
+      function onStop() {
+        document.removeEventListener('mousemove', onDrag);
+        document.removeEventListener('mouseup', onStop);
+        detailResizeHandle.classList.remove('active');
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+      }
+
+      document.addEventListener('mousemove', onDrag);
+      document.addEventListener('mouseup', onStop);
+    });
+  }
+
+  // Request Composer Logic
+  const requestComposer = document.getElementById('requestComposer');
+  const closeComposerBtn = document.getElementById('closeComposerBtn');
+  const sendRequestBtn = document.getElementById('sendRequestBtn');
+
+  if (closeComposerBtn) {
+    closeComposerBtn.addEventListener('click', () => {
+      requestComposer.style.display = 'none';
+    });
+  }
+
+  // Close when clicking outside modal
+  if (requestComposer) {
+    requestComposer.addEventListener('click', (e) => {
+      if (e.target === requestComposer) {
+        requestComposer.style.display = 'none';
+      }
+    });
+  }
+
+  // Composer Tabs
+  // Composer Tabs (Request Composer only)
+  document.querySelectorAll('#requestComposer .composer-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('#requestComposer .composer-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('#requestComposer .composer-panel').forEach(p => p.classList.remove('active'));
+
+      tab.classList.add('active');
+      const target = document.getElementById(`composer-${tab.dataset.tab}`);
+      if (target) target.classList.add('active');
+    });
+  });
+
+  if (sendRequestBtn) {
+    sendRequestBtn.addEventListener('click', async () => {
+      const method = document.getElementById('composerMethod').value;
+      const url = document.getElementById('composerUrl').value;
+      const headersText = document.getElementById('composerHeadersInput').value;
+      const bodyText = document.getElementById('composerBodyInput').value;
+
+      const output = document.getElementById('composerResponseOutput');
+      const headersOutput = document.getElementById('composerResponseHeaders');
+      const statusDiv = document.getElementById('composerResponseStatus');
+
+      // Switch to response tab
+      const resTab = document.querySelector('#requestComposer .composer-tab[data-tab="response"]');
+      if (resTab) resTab.click();
+
+      console.log(`Sending ${method} request to ${url}`);
+      output.textContent = "Sending request...";
+      headersOutput.textContent = "";
+      statusDiv.textContent = "";
+
+      try {
+        const headers = {};
+        headersText.split('\n').forEach(line => {
+          const parts = line.split(':');
+          if (parts.length >= 2) {
+            const key = parts[0].trim();
+            const val = parts.slice(1).join(':').trim();
+            if (key) headers[key] = val;
+          }
+        });
+
+        const options = {
+          method: method,
+          headers: headers,
+          redirect: 'manual' // Prevent auto-following redirects to see the actual response code
+        };
+
+        if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && bodyText) {
+          options.body = bodyText;
         }
-      }
 
-      function stopDrag() {
-        document.removeEventListener('mousemove', doDrag);
-        document.removeEventListener('mouseup', stopDrag);
-      }
+        const startTime = performance.now();
+        const res = await fetch(url, options);
+        const endTime = performance.now();
+        const duration = Math.round(endTime - startTime);
 
-      document.addEventListener('mousemove', doDrag);
-      document.addEventListener('mouseup', stopDrag);
+        const contentType = res.headers.get('content-type') || '';
+
+        // Format Headers
+        let resHeadersStr = "";
+        res.headers.forEach((val, key) => {
+          resHeadersStr += `${key}: ${val}\n`;
+        });
+        if (!resHeadersStr) resHeadersStr = "(No headers available or CORS restricted)";
+        headersOutput.textContent = resHeadersStr;
+
+        let statusColor = 'var(--info)';
+        if (res.ok) statusColor = 'var(--success)';
+        else if (res.status >= 300 && res.status < 400) statusColor = 'var(--warning)';
+        else if (res.status >= 400) statusColor = 'var(--danger)';
+
+        statusDiv.innerHTML = `Status: <span style="color:${statusColor}">${res.status} ${res.statusText}</span> | Time: ${duration}ms`;
+
+        if (contentType.startsWith('image/')) {
+          try {
+            const blob = await res.blob();
+            const imgUrl = URL.createObjectURL(blob);
+            output.innerHTML = `<div style="padding:10px; display:flex; flex-direction:column; align-items:center;">
+                    <img src="${imgUrl}" style="max-width:100%; max-height:400px; border:1px solid var(--border-color); object-fit:contain;">
+                    <div style="margin-top:8px; font-size:12px; color:var(--text-secondary);">${contentType} (${blob.size} bytes)</div>
+                </div>`;
+          } catch (e) {
+            output.textContent = "Error loading image: " + e.message;
+          }
+        } else {
+          let data;
+          if (contentType.includes('application/json')) {
+            try {
+              data = await res.json();
+              data = JSON.stringify(data, null, 2);
+            } catch (jsonErr) {
+              data = await res.text();
+            }
+          } else {
+            data = await res.text();
+          }
+          output.textContent = typeof data === 'string' ? data.trim() : data;
+        }
+
+        if (res.type === 'opaqueredirect') {
+          output.textContent += "\n[Opaque Redirect - Request was redirected but CORS prevented checking destination]";
+        }
+
+      } catch (err) {
+        output.textContent = "Error sending request: " + err.message;
+        if (headersOutput) headersOutput.textContent = "";
+        statusDiv.textContent = "Failed";
+        statusDiv.style.color = "var(--danger)";
+        console.error("Request failed:", err);
+      }
     });
   }
 });
@@ -347,8 +1157,27 @@ let currentConsoleErrors = [];
 let allConsoleErrors = [];
 let currentConsoleFilter = { level: 'all', search: '' };
 
+// Timeline detail panel filter state
+let timelineConsoleFilter = { level: 'all', search: '' };
+let timelineNetworkFilter = { type: 'all', search: '' };
+
+function showEmptyState() {
+  const emptyState = document.getElementById('emptyState');
+  if (emptyState) emptyState.style.display = 'flex';
+}
+
+function hideEmptyState() {
+  const emptyState = document.getElementById('emptyState');
+  if (emptyState) emptyState.style.display = 'none';
+}
+
 function renderReport(data) {
+  hideEmptyState();
   currentReportData = data;
+
+  // Persistence disabled per user request
+
+
   const hasEvents = data.userEvents && data.userEvents.length > 0;
 
   const downloadBtn = document.getElementById('downloadBtn');
@@ -430,8 +1259,13 @@ function renderReport(data) {
   allConsoleErrors = data.consoleErrors || []; // Store original data for filtering logic
   try {
     renderTimeline(data.userEvents || [], data.consoleErrors || [], (data.har && data.har.log && data.har.log.entries) ? data.har.log.entries : [], data.issues || [], data.screencast || []);
-  } catch (e) { console.error("Error rendering timeline:", e); }
+  } catch (e) {
+    console.error("Error rendering timeline:", e);
+    // Ensure globalAllEvents is defined even if renderTimeline fails
+    if (!globalAllEvents.length) globalAllEvents = [];
+  }
 
+  // Use the globalAllEvents populated by renderTimeline
   try {
     renderEnvironment(data.environment || {});
   } catch (e) { console.error("Error rendering environment:", e); }
@@ -444,17 +1278,8 @@ function renderReport(data) {
     renderScreencast(data.screencast || []);
   } catch (e) { console.error("Error rendering screencast:", e); }
 
-  let allEvents = [];
   try {
-    (data.userEvents || []).forEach(e => allEvents.push({ ...e, source: 'user', sortTime: e.timestamp }));
-    (data.consoleErrors || []).forEach(e => allEvents.push({ ...e, source: 'console', sortTime: e.timestamp }));
-    ((data.har && data.har.log && data.har.log.entries) ? data.har.log.entries : []).forEach(e => allEvents.push({ ...e, source: 'network', sortTime: new Date(e.startedDateTime).getTime() }));
-    (data.issues || []).forEach(e => allEvents.push({ ...e, source: 'issue', sortTime: e.timestamp }));
-    allEvents.sort((a, b) => a.sortTime - b.sortTime);
-  } catch (e) { console.error("Error preparing allEvents:", e); }
-
-  try {
-    renderIssues(data.issues || [], data.screencast || [], allEvents);
+    renderIssues(data.issues || [], data.screencast || [], globalAllEvents);
   } catch (e) { console.error("Error rendering issues:", e); }
 
   // Hide Content Changes for now
@@ -467,6 +1292,12 @@ function renderReport(data) {
   try {
     filterAndRenderNetwork();
   } catch (e) { console.error("Error rendering network:", e); }
+
+  // Default to first tab (Environment) if no tab is active
+  if (!document.querySelector('.tab-btn.active')) {
+    const envTab = document.querySelector('.tab-btn[data-target="environment"]');
+    if (envTab) envTab.click();
+  }
 }
 
 function renderContentChanges(changes, frames) {
@@ -647,10 +1478,14 @@ function renderConsole(errors) {
     return;
   }
 
+  // Optimize with Fragment
+  const fragment = document.createDocumentFragment();
+
   errors.forEach(err => {
     const tr = document.createElement('tr');
     tr.className = 'error-row';
     tr.style.cursor = 'pointer';
+    tr.dataset.timestamp = err.timestamp || '';
 
     // Try to format timestamp if it looks like epoch (large number)
     let tsDisplay = err.timestamp;
@@ -672,8 +1507,10 @@ function renderConsole(errors) {
       tr.classList.add('selected');
       showConsoleDetails(err);
     });
-    tbody.appendChild(tr);
+    fragment.appendChild(tr);
   });
+
+  tbody.appendChild(fragment);
 }
 
 function renderNetwork(har) {
@@ -691,10 +1528,14 @@ function renderNetwork(har) {
     return;
   }
 
+  // Optimize with Fragment
+  const fragment = document.createDocumentFragment();
+
   entries.forEach(entry => {
     const tr = document.createElement('tr');
     tr.style.cursor = 'pointer';
     tr.title = 'Click to view details';
+    tr.dataset.startTime = new Date(entry.startedDateTime).getTime();
 
     // Status Logic
     const status = entry.response.status;
@@ -736,25 +1577,56 @@ function renderNetwork(har) {
         <div style="font-weight:600; color:var(--text-main); margin-bottom:2px;">${escapeHtml(name)}</div>
         <div style="font-size:11px; color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(url)}</div>
       </td>
+      <td>
+        <button class="action-btn" style="padding:4px 8px; font-size:11px;">Resend</button>
+      </td>
     `;
+
+    // Resend Button Click
+    const resendBtn = tr.querySelector('button');
+    resendBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openRequestComposer(entry);
+    });
 
     tr.addEventListener('click', () => {
       tbody.querySelectorAll('tr').forEach(r => r.classList.remove('selected'));
       tr.classList.add('selected');
       showDetails(entry);
     });
-    tbody.appendChild(tr);
+    fragment.appendChild(tr);
   });
+
+  tbody.appendChild(fragment);
 }
 
 function renderTimeline(userEvents, consoleErrors, networkEntries, issues, screencast) {
   const tbody = document.querySelector('#timelineTable tbody');
+  const thead = document.querySelector('#timelineTable thead');
+
+  // Update Header for Editor Mode
+  if (isEditorMode) {
+    thead.innerHTML = `
+        <tr>
+            <th style="width:50px;">Action</th>
+            <th style="width:100px;">Time</th>
+            <th style="width:80px;">Source</th>
+            <th>Event Details</th>
+        </tr>`;
+  } else {
+    thead.innerHTML = `
+        <tr>
+            <th style="width:100px;">Time</th>
+            <th style="width:80px;">Source</th>
+            <th>Event Details</th>
+        </tr>`;
+  }
 
   // Merge all events for context
   let allEvents = [];
 
-  // Add User Events
-  userEvents.forEach(e => allEvents.push({ ...e, source: 'user', sortTime: e.timestamp }));
+  // Add User Events with index for deletion
+  userEvents.forEach((e, i) => allEvents.push({ ...e, source: 'user', sortTime: e.timestamp, originalIndex: i }));
 
   // Add Console Errors
   consoleErrors.forEach(e => allEvents.push({ ...e, source: 'console', sortTime: e.timestamp }));
@@ -768,6 +1640,9 @@ function renderTimeline(userEvents, consoleErrors, networkEntries, issues, scree
   // Sort
   allEvents.sort((a, b) => a.sortTime - b.sortTime);
 
+  // Update global variable for screencast/timeline sync
+  globalAllEvents = allEvents;
+
   // Filter for table display (User Events & Issues only)
   const tableEvents = allEvents.filter(e => e.source === 'user' || e.source === 'issue');
 
@@ -776,12 +1651,16 @@ function renderTimeline(userEvents, consoleErrors, networkEntries, issues, scree
     return;
   }
 
+  const fragment = document.createDocumentFragment();
+
   tableEvents.forEach(event => {
     const tr = document.createElement('tr');
     tr.style.cursor = 'pointer';
     tr.addEventListener('click', () => {
       document.querySelectorAll('#timelineTable tr').forEach(r => r.classList.remove('selected'));
       tr.classList.add('selected');
+      // Pause video if playing, then jump to event position
+      if (pauseScreencast) pauseScreencast();
       updatePreview(event.sortTime, screencast, allEvents);
     });
 
@@ -792,8 +1671,11 @@ function renderTimeline(userEvents, consoleErrors, networkEntries, issues, scree
     if (event.source === 'user') {
       sourceDisplay = `<span class="badge badge-info">USER</span>`;
       if (event.type === 'click') {
-        details = `Clicked <b>${event.target.tagName}</b>`;
-        // if (event.target.innerText) details += ` "${escapeHtml(event.target.innerText)}"`;
+        if (event.target.tagName === 'A' && event.target.innerText && event.target.innerText.trim()) {
+          details = `Clicked Link "<b>${escapeHtml(event.target.innerText.trim())}</b>"`;
+        } else {
+          details = `Clicked <b>${event.target.tagName}</b>`;
+        }
         if (event.target.xpath) details += ` <span style="color:#999; font-size:11px;">${escapeHtml(event.target.xpath)}</span>`;
       } else if (event.type === 'keydown') {
         details = `Key: <b>${event.key}</b>`;
@@ -807,13 +1689,57 @@ function renderTimeline(userEvents, consoleErrors, networkEntries, issues, scree
       details = `<b>Reported:</b> ${escapeHtml(event.comment)}`;
     }
 
-    tr.innerHTML = `
-      <td class="meta" style="font-family:monospace;">${new Date(event.sortTime).toLocaleTimeString()}</td>
-      <td>${sourceDisplay}</td>
-      <td>${details}</td>
-    `;
-    tbody.appendChild(tr);
+    let actionCell = '';
+    if (isEditorMode) {
+      if (event.source === 'user') {
+        actionCell = `<td><button class="action-btn delete-btn" title="Remove Event" style="padding:4px; color:var(--danger); border-color:var(--danger); display:flex; align-items:center; justify-content:center;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+        </button></td>`;
+      } else {
+        actionCell = `<td></td>`;
+      }
+    }
+
+    if (isEditorMode) {
+      tr.innerHTML = `
+          ${actionCell}
+          <td class="meta" style="font-family:monospace;">${new Date(event.sortTime).toLocaleTimeString()}</td>
+          <td>${sourceDisplay}</td>
+          <td>${details}</td>
+        `;
+    } else {
+      tr.innerHTML = `
+          <td class="meta" style="font-family:monospace;">${new Date(event.sortTime).toLocaleTimeString()}</td>
+          <td>${sourceDisplay}</td>
+          <td>${details}</td>
+        `;
+    }
+
+    // Add listener for delete button if applicable
+    if (isEditorMode && event.source === 'user') {
+      const btn = tr.querySelector('.delete-btn');
+      if (btn) {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (confirm('Delete this user event?')) {
+            // Use originalIndex which we added earlier
+            if (currentReportData && currentReportData.userEvents) {
+              // Find the event in the current list by index or other means?
+              // Since we re-render every time, indices are fresh.
+              // Just to be safe, filter it out or splice.
+              // Using splice is risky if indices shifted but we re-render immediately so it's fine.
+              currentReportData.userEvents.splice(event.originalIndex, 1);
+              renderReport(currentReportData);
+            }
+          }
+        });
+      }
+    }
+
+    fragment.appendChild(tr);
   });
+
+  tbody.appendChild(fragment);
 
   // Pre-select first row
   const firstRow = tbody.querySelector('tr');
@@ -823,70 +1749,262 @@ function renderTimeline(userEvents, consoleErrors, networkEntries, issues, scree
 }
 
 function updatePreview(timestamp, screencast, allEvents) {
-  // Update Image
-  const player = document.getElementById('previewImage');
+  // Update Header
+  const header = document.getElementById('timelineDetailHeader');
+  if (header) header.textContent = `State at ${new Date(timestamp).toLocaleTimeString()}`;
+
+  // Update Player (Top)
+  const player = document.getElementById('screenPlayer');
+
   if (screencast && screencast.length > 0) {
     // Find closest frame by wallTime
     let closestFrame = null;
     let minDiff = Infinity;
+    let frameIndex = -1;
 
-    screencast.forEach(frame => {
+    screencast.forEach((frame, i) => {
       if (frame.wallTime) {
         const diff = Math.abs(frame.wallTime - timestamp);
         if (diff < minDiff) {
           minDiff = diff;
           closestFrame = frame;
+          frameIndex = i;
         }
       }
     });
 
-    if (closestFrame) {
+    if (closestFrame && minDiff < 5000) {
       player.src = "data:image/jpeg;base64," + closestFrame.data;
-    } else {
-      player.alt = "No frame found (timestamp mismatch)";
+      player.style.display = 'block';
+
+      // Update Scrubber & Global Index
+      const scrubber = document.getElementById('scrubber');
+      const timeDisplay = document.getElementById('timeDisplay');
+
+      if (frameIndex !== -1) {
+        currentScreencastIndex = frameIndex;
+        if (scrubber) scrubber.value = frameIndex;
+
+        if (timeDisplay && screencast[0].wallTime) {
+          const startTime = screencast[0].wallTime;
+          const time = closestFrame.wallTime - startTime;
+          timeDisplay.textContent = new Date(time < 0 ? 0 : time).toISOString().substr(11, 8);
+        }
+      }
     }
   }
 
-  // Update Context
-  const contextDiv = document.getElementById('previewContext');
+  // Update Tabs
+  updateTabsContent(timestamp, allEvents);
+}
 
-  // Find logs/network occurring AFTER this event (within 5 seconds)
-  const subsequentLogs = allEvents.filter(e => e.source === 'console' && e.sortTime >= timestamp && e.sortTime < (timestamp + 5000));
-  const subsequentNetwork = allEvents.filter(e => e.source === 'network' && e.sortTime >= timestamp && e.sortTime < (timestamp + 5000));
+// Helper to programmatically switch to a sidebar tab
+function switchToTab(tabName) {
+  document.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  const targetTab = document.querySelector(`.tab-btn[data-target="${tabName}"]`);
+  if (targetTab) targetTab.classList.add('active');
+  const targetContent = document.getElementById(tabName);
+  if (targetContent) targetContent.classList.add('active');
+}
 
-  let html = ``;
+function updateTabsContent(timestamp, events) {
+  const allEvents = events || globalAllEvents || [];
 
-  // Logs Section
-  html += `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
-            <b>Subsequent Logs (next 5s):</b>
-            ${createCopyBtnHTML('previewLogsContent')}
-           </div>`;
-  html += `<div id="previewLogsContent" style="max-height:150px; overflow-y:auto; background:var(--bg-input, #3a3b3c); padding:5px; border-radius:4px;">`;
-  if (subsequentLogs.length === 0) html += `<span style="color:var(--text-secondary); font-size:10px;">None</span>`;
-  subsequentLogs.forEach(l => {
-    html += `<div class="code error-row" style="font-size:11px; margin-bottom:2px; color:var(--text-main); font-family:monospace;">${escapeHtml(l.text || l.message || '').substring(0, 100)}...</div>`;
+  // 2. Console (History up to timestamp, Descending) with filters
+  const consoleTbody = document.querySelector('#timelineConsoleTable tbody');
+  if (consoleTbody) {
+    consoleTbody.innerHTML = '';
+    // Filter up to current time
+    let logs = allEvents.filter(e => e.source === 'console' && e.sortTime <= timestamp);
+
+    // Apply search filter
+    if (timelineConsoleFilter.search) {
+      const search = timelineConsoleFilter.search;
+      logs = logs.filter(log => {
+        const text = (log.text || log.message || '').toLowerCase();
+        return text.includes(search);
+      });
+    }
+
+    // Apply level filter
+    if (timelineConsoleFilter.level !== 'all') {
+      logs = logs.filter(log => {
+        const lvl = (log.level || 'log').toLowerCase();
+        if (timelineConsoleFilter.level === 'error' && lvl !== 'error') return false;
+        if (timelineConsoleFilter.level === 'warning' && lvl !== 'warning') return false;
+        if (timelineConsoleFilter.level === 'log' && (lvl === 'error' || lvl === 'warning')) return false;
+        return true;
+      });
+    }
+
+    // Sort Descending (Newest First)
+    logs.sort((a, b) => b.sortTime - a.sortTime);
+
+    const recentLogs = logs.slice(0, 200); // Show last 200
+
+    if (recentLogs.length === 0) {
+      consoleTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-secondary); padding:10px;">No console logs match.</td></tr>';
+    } else {
+      recentLogs.forEach(log => {
+        const tr = document.createElement('tr');
+        tr.style.cursor = 'pointer';
+        const color = log.level === 'error' ? 'var(--danger)' : (log.level === 'warning' ? 'var(--warning)' : 'inherit');
+        tr.innerHTML = `
+                <td style="font-family:monospace; color:var(--text-secondary);">${new Date(log.sortTime).toLocaleTimeString()}</td>
+                <td><span class="badge" style="color:${color}; border:1px solid ${color}; padding:1px 4px; border-radius:3px; font-size:10px;">${log.level}</span></td>
+                <td style="font-family:monospace; color:${color}; word-break:break-all;">${escapeHtml(log.text || log.message || '')}</td>
+              `;
+        tr.addEventListener('click', () => {
+          switchToTab('console');
+          showConsoleDetails(log);
+          // Highlight matching row in main console table
+          const mainTbody = document.querySelector('#consoleTable tbody');
+          if (mainTbody) {
+            mainTbody.querySelectorAll('tr').forEach(r => r.classList.remove('selected'));
+            const match = mainTbody.querySelector(`tr[data-timestamp="${log.timestamp || ''}"]`);
+            if (match) {
+              match.classList.add('selected');
+              match.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+          }
+        });
+        consoleTbody.appendChild(tr);
+      });
+    }
+  }
+
+  // 3. Network (History up to timestamp, Descending) with filters
+  const networkTbody = document.querySelector('#timelineNetworkTable tbody');
+  if (networkTbody) {
+    networkTbody.innerHTML = '';
+    // Filter up to current time
+    let reqs = allEvents.filter(e => e.source === 'network' && e.sortTime <= timestamp);
+
+    // Apply search filter
+    if (timelineNetworkFilter.search) {
+      const search = timelineNetworkFilter.search;
+      reqs = reqs.filter(req => {
+        const url = (req.request.url || '').toLowerCase();
+        return url.includes(search);
+      });
+    }
+
+    // Apply type filter
+    if (timelineNetworkFilter.type !== 'all') {
+      reqs = reqs.filter(req => {
+        const type = (req._resourceType || '').toLowerCase();
+        const mime = (req.response && req.response.content && req.response.content.mimeType || '').toLowerCase();
+        switch (timelineNetworkFilter.type) {
+          case 'xhr': return type === 'xhr' || type === 'fetch' || mime.includes('json');
+          case 'js': return type === 'script' || mime.includes('javascript');
+          case 'css': return type === 'stylesheet' || mime.includes('css');
+          case 'img': return type === 'image' || mime.includes('image');
+          case 'media': return type === 'media' || mime.includes('video') || mime.includes('audio');
+          case 'doc': return type === 'document' || mime.includes('html');
+          default: return true;
+        }
+      });
+    }
+
+    // Sort Descending
+    reqs.sort((a, b) => b.sortTime - a.sortTime);
+
+    const recentReqs = reqs.slice(0, 200);
+
+    if (recentReqs.length === 0) {
+      networkTbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--text-secondary); padding:10px;">No network requests match.</td></tr>';
+    } else {
+      recentReqs.forEach(req => {
+        const tr = document.createElement('tr');
+        tr.style.cursor = 'pointer';
+        const statusColor = req.response.status >= 400 ? 'var(--danger)' : 'var(--success)';
+        tr.innerHTML = `
+                <td style="font-family:monospace; color:var(--text-secondary);">${new Date(req.sortTime).toLocaleTimeString()}</td>
+                <td style="font-weight:600; font-size:11px;">${req.request.method}</td>
+                <td style="word-break:break-all;">${escapeHtml(req.request.url.split('/').pop().split('?')[0] || req.request.url)}</td>
+                <td style="color:${statusColor}; font-weight:600;">${req.response.status}</td>
+              `;
+        tr.addEventListener('click', () => {
+          switchToTab('network');
+          showDetails(req);
+          // Highlight matching row in main network table
+          const mainTbody = document.querySelector('#networkTable tbody');
+          if (mainTbody) {
+            mainTbody.querySelectorAll('tr').forEach(r => r.classList.remove('selected'));
+            const startTime = new Date(req.startedDateTime).getTime();
+            const match = mainTbody.querySelector(`tr[data-start-time="${startTime}"]`);
+            if (match) {
+              match.classList.add('selected');
+              match.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+          }
+        });
+        networkTbody.appendChild(tr);
+      });
+    }
+  }
+
+
+}
+
+function highlightEventRow(timestamp) {
+  const tbody = document.querySelector('#timelineTable tbody');
+  if (!tbody || !globalAllEvents.length) return;
+
+  // Only consider events that are displayed in the table (user + issue)
+  const tableEvents = globalAllEvents.filter(e => e.source === 'user' || e.source === 'issue');
+
+  // Find the last table event that occurred at or before this timestamp
+  let lastTableIndex = -1;
+  const tolerance = 100; // ms
+
+  for (let i = tableEvents.length - 1; i >= 0; i--) {
+    if (tableEvents[i].sortTime <= (timestamp + tolerance)) {
+      lastTableIndex = i;
+      break;
+    }
+  }
+
+  // Remove existing highlights and indicator icons
+  const rows = tbody.querySelectorAll('tr');
+  rows.forEach(r => {
+    r.style.outline = '';
+    r.style.background = '';
+    const icon = r.querySelector('.now-playing-icon');
+    if (icon) icon.remove();
   });
-  html += `</div>`;
 
-  // Network Section
-  html += `<div style="display:flex; justify-content:space-between; align-items:center; margin-top:15px; margin-bottom:5px;">
-            <b>Subsequent Network (next 5s):</b>
-            ${createCopyBtnHTML('previewNetworkContent')}
-           </div>`;
-  html += `<div id="previewNetworkContent" style="max-height:150px; overflow-y:auto; background:var(--bg-input, #3a3b3c); padding:5px; border-radius:4px;">`;
-  if (subsequentNetwork.length === 0) html += `<span style="color:var(--text-secondary); font-size:10px;">None</span>`;
-  subsequentNetwork.forEach(n => {
-    const statusColor = n.response.status >= 400 ? 'var(--danger)' : 'var(--text-main)';
-    html += `<div class="code" style="font-size:11px; margin-bottom:2px; color:${statusColor}; font-family:monospace;">${n.request.method} ${n.request.url.substring(0, 60)}...</div>`;
-  });
-  html += `</div>`;
+  if (lastTableIndex >= 0 && lastTableIndex < rows.length) {
+    const row = rows[lastTableIndex];
+    row.style.outline = '2px solid var(--primary)';
+    row.style.background = 'rgba(46, 137, 255, 0.08)';
 
-  contextDiv.innerHTML = html;
+    // Add a "now playing" indicator icon to the first cell
+    const firstCell = row.querySelector('td');
+    if (firstCell && !firstCell.querySelector('.now-playing-icon')) {
+      const icon = document.createElement('span');
+      icon.className = 'now-playing-icon';
+      icon.style.cssText = 'display:inline-flex; align-items:center; margin-right:6px; color:var(--primary); animation:pulse-icon 1.2s ease-in-out infinite;';
+      icon.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+      firstCell.insertBefore(icon, firstCell.firstChild);
+    }
+
+    row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  // Inject keyframe animation if not already present
+  if (!document.getElementById('pulse-icon-style')) {
+    const style = document.createElement('style');
+    style.id = 'pulse-icon-style';
+    style.textContent = `@keyframes pulse-icon { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }`;
+    document.head.appendChild(style);
+  }
 }
 
 // Copy Button Logic (Delegation)
 function createCopyBtnHTML(targetId) {
-  return `<button class="copy-icon-btn" data-copy-target="${targetId}" title="Copy">
+  return `<button class="action-btn copy-icon-btn" data-copy-target="${targetId}" title="Copy" style="padding:4px; color:var(--text-main);">
         <svg style="pointer-events:none;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
     </button>`;
 }
@@ -905,7 +2023,10 @@ document.addEventListener('click', (e) => {
   navigator.clipboard.writeText(text).then(() => {
     // Visual Feedback
     const original = btn.innerHTML;
-    btn.innerHTML = `<svg style="pointer-events:none;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+    // Don't replace if already showing feedback to avoid race conditions or losing original icon permanently
+    if (btn.innerText.includes("Copied!")) return;
+
+    btn.innerHTML = `<span style="font-size:10px; font-weight:bold; color:var(--success);">Copied!</span>`;
     setTimeout(() => btn.innerHTML = original, 1500);
   });
 });
@@ -1005,15 +2126,14 @@ function showDetails(entry) {
     // Ensure Copy Button
     const titleEl = box.querySelector('.section-title');
     if (titleEl) {
-      // Restore title text if needed (e.g. if console overwrote it) but keep the span!
-      // Actually, the span is inside the titleEl in HTML.
-      // If console view overwrote innerHTML, the span is GONE.
-      // So valid strategy is to reconstruct innerHTML if the span is missing.
-      if (!titleEl.querySelector('.badge')) {
-        titleEl.innerHTML = `${defaultTitle} <span id="${countId}" class="badge" style="background:var(--bg-input); color:var(--text-secondary); margin-left:5px;">${(headers || []).length}</span>`;
-      } else {
-        // Just update text part if needed, but usually 'Response Headers' is static there.
-        // We already updated textContent of the badge above.
+      // Ensure wrapper exists for text+badge to keep them together (fixes spacing issue)
+      if (!titleEl.querySelector('.title-wrapper')) {
+        // Capture current badge state (with updated count)
+        const currentBadge = titleEl.querySelector('.badge');
+        const badgeHTML = currentBadge ? currentBadge.outerHTML : `<span id="${countId}" class="badge" style="background:var(--bg-input); color:var(--text-secondary); margin-left:5px;">${(headers || []).length}</span>`;
+
+        // Rebuild structure: Wrapper(Text + Badge)
+        titleEl.innerHTML = `<span class="title-wrapper" style="display:flex; align-items:center;">${defaultTitle} ${badgeHTML}</span>`;
       }
 
       if (!titleEl.querySelector('.copy-icon-btn')) {
@@ -1093,7 +2213,7 @@ window.viewSource = async function (url, line, col) {
   if (!preview) {
     preview = document.createElement('div');
     preview.id = 'sourcePreview';
-    preview.style.cssText = "margin-top:10px; border:1px solid #ccc; background:#f9f9f9; padding:10px; max-height:300px; overflow:auto; font-family:monospace; white-space:pre; font-size:12px;";
+    preview.style.cssText = "margin-top:10px; border:1px solid var(--border-color); background:var(--bg-input); color:var(--text-main); padding:10px; max-height:300px; overflow:auto; font-family:monospace; white-space:pre; font-size:12px;";
     // Append inside the modal content, somewhere suitable. 
     // The modal has 'resBody' (Stack Trace) parent. We can append after that.
     const parent = document.getElementById('resBody').parentElement;
@@ -1117,8 +2237,9 @@ window.viewSource = async function (url, line, col) {
     let html = '';
     for (let i = start; i < end; i++) {
       const isTarget = (i === targetLineIndex);
-      const style = isTarget ? "background:#ffeda3; font-weight:bold; display:block; width:100%; border-left: 3px solid #d13438; padding-left: 5px;" : "display:block; padding-left: 8px;";
-      html += `<div style="${style}"><span style="color:#888; margin-right:10px; user-select:none; display:inline-block; width:30px; text-align:right;">${i + 1}</span>${escapeHtml(lines[i])}</div>`;
+      // Use semi-transparent background for highlight to work in both modes
+      const style = isTarget ? "background:rgba(209, 52, 56, 0.2); font-weight:bold; display:block; width:100%; border-left: 3px solid #d13438; padding-left: 5px; color:var(--text-main);" : "display:block; padding-left: 8px; color:var(--text-secondary);";
+      html += `<div style="${style}"><span style="color:var(--text-secondary); opacity:0.7; margin-right:10px; user-select:none; display:inline-block; width:30px; text-align:right;">${i + 1}</span>${escapeHtml(lines[i])}</div>`;
     }
 
     preview.innerHTML = html;
@@ -1184,7 +2305,7 @@ function showConsoleDetails(err) {
       const lineDisplay = hasLine ? `:${lineNumber}:${colNumber}` : '';
 
       // Use class and data attributes instead of onclick
-      return `  at ${f.functionName || '(anonymous)'} (<a href="#" class="source-link" data-url="${escapeHtml(url)}" data-line="${lineNumber}" data-col="${colNumber}" style="color:#2e89ff; text-decoration:underline;">${escapeHtml(url)}${lineDisplay}</a>)`;
+      return `  at ${f.functionName || '(anonymous)'} (<a href="#" class="source-link" data-url="${escapeHtml(url)}" data-line="${lineNumber}" data-col="${colNumber}" style="color:var(--primary); text-decoration:none; border-bottom:1px dotted var(--primary); word-break:break-all;">${escapeHtml(url)}${lineDisplay}</a>)`;
     }).join('\n');
   } else if (err.url) {
     const line = err.line || err.lineNumber;
@@ -1193,7 +2314,7 @@ function showConsoleDetails(err) {
     const lineDisplay = hasLine ? `:${line}:${col}` : '';
     const safeLine = hasLine ? line : 1;
 
-    stackHtml = `at <a href="#" class="source-link" data-url="${escapeHtml(err.url)}" data-line="${safeLine}" data-col="${col || 1}" style="color:#2e89ff; text-decoration:underline;">${escapeHtml(err.url)}${lineDisplay}</a>`;
+    stackHtml = `at <a href="#" class="source-link" data-url="${escapeHtml(err.url)}" data-line="${safeLine}" data-col="${col || 1}" style="color:var(--primary); text-decoration:none; border-bottom:1px dotted var(--primary); word-break:break-all;">${escapeHtml(err.url)}${lineDisplay}</a>`;
   } else {
     stackHtml = '(No stack trace available)';
   }
@@ -1217,9 +2338,67 @@ function showConsoleDetails(err) {
 
 function renderScreencast(frames) {
   const player = document.getElementById('screenPlayer');
-  const scrubber = document.getElementById('scrubber');
-  const timeDisplay = document.getElementById('timeDisplay');
-  const playBtn = document.getElementById('playBtn');
+  // Timeline Detail Tabs
+  const timelineDetailTabs = document.querySelectorAll('.timeline-tab');
+  timelineDetailTabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      timelineDetailTabs.forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.timeline-panel').forEach(p => p.classList.remove('active'));
+
+      tab.classList.add('active');
+      const target = document.getElementById(`timeline-${tab.dataset.tab}`);
+      if (target) target.classList.add('active');
+    });
+  });
+
+  // --- Timeline Console Filter Listeners ---
+  const tlConsoleSearch = document.getElementById('timelineConsoleSearch');
+  if (tlConsoleSearch) {
+    tlConsoleSearch.addEventListener('input', (e) => {
+      timelineConsoleFilter.search = e.target.value.toLowerCase();
+      // Re-render with current timestamp
+      const currentFrame = frames && frames[currentScreencastIndex];
+      if (currentFrame) updateTabsContent(currentFrame.wallTime || (currentFrame.timestamp * 1000));
+    });
+  }
+
+  document.querySelectorAll('.timeline-console-filter').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.timeline-console-filter').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      timelineConsoleFilter.level = chip.dataset.filter || 'all';
+      const currentFrame = frames && frames[currentScreencastIndex];
+      if (currentFrame) updateTabsContent(currentFrame.wallTime || (currentFrame.timestamp * 1000));
+    });
+  });
+
+  // --- Timeline Network Filter Listeners ---
+  const tlNetworkSearch = document.getElementById('timelineNetworkSearch');
+  if (tlNetworkSearch) {
+    tlNetworkSearch.addEventListener('input', (e) => {
+      timelineNetworkFilter.search = e.target.value.toLowerCase();
+      const currentFrame = frames && frames[currentScreencastIndex];
+      if (currentFrame) updateTabsContent(currentFrame.wallTime || (currentFrame.timestamp * 1000));
+    });
+  }
+
+  document.querySelectorAll('.timeline-network-filter').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.timeline-network-filter').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      const filterText = (chip.dataset.filter || 'all').toLowerCase();
+      if (filterText === 'all') timelineNetworkFilter.type = 'all';
+      else if (filterText.includes('fetch') || filterText.includes('xhr')) timelineNetworkFilter.type = 'xhr';
+      else if (filterText === 'js') timelineNetworkFilter.type = 'js';
+      else if (filterText === 'css') timelineNetworkFilter.type = 'css';
+      else if (filterText === 'img') timelineNetworkFilter.type = 'img';
+      else if (filterText === 'media') timelineNetworkFilter.type = 'media';
+      else if (filterText === 'doc') timelineNetworkFilter.type = 'doc';
+      else timelineNetworkFilter.type = 'all';
+      const currentFrame = frames && frames[currentScreencastIndex];
+      if (currentFrame) updateTabsContent(currentFrame.wallTime || (currentFrame.timestamp * 1000));
+    });
+  });
 
   if (!frames || frames.length === 0) {
     player.alt = "No screencast recorded.";
@@ -1235,8 +2414,17 @@ function renderScreencast(frames) {
   scrubber.value = 0;
 
   let isPlaying = false;
-  let currentIndex = 0;
+  currentScreencastIndex = 0;
   let timeoutId = null;
+
+  // Expose a global pause function so clicking timeline rows can pause playback
+  pauseScreencast = function () {
+    if (isPlaying) {
+      clearTimeout(timeoutId);
+      playBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg> Play`;
+      isPlaying = false;
+    }
+  };
 
   function showFrame(index) {
     if (index >= frames.length) index = frames.length - 1;
@@ -1244,12 +2432,17 @@ function renderScreencast(frames) {
 
     const frame = frames[index];
     player.src = "data:image/jpeg;base64," + frame.data;
+    player.style.display = 'block';
 
     const currentFrameTime = frame.wallTime || (frame.timestamp * 1000);
     const time = currentFrameTime - startTime;
     timeDisplay.textContent = new Date(time).toISOString().substr(11, 8);
     scrubber.value = index;
-    currentIndex = index;
+    currentScreencastIndex = index;
+
+    // Update Detail Tabs (Console/Network) to match video time
+    updateTabsContent(currentFrameTime);
+    highlightEventRow(currentFrameTime);
   }
 
   showFrame(0);
@@ -1276,20 +2469,20 @@ function renderScreencast(frames) {
   function playNextFrame() {
     if (!isPlaying) return;
 
-    if (currentIndex >= frames.length - 1) {
+    if (currentScreencastIndex >= frames.length - 1) {
       togglePlay(); // Stop at end
       return;
     }
 
-    const currentFrame = frames[currentIndex];
-    const nextFrame = frames[currentIndex + 1];
+    const currentFrame = frames[currentScreencastIndex];
+    const nextFrame = frames[currentScreencastIndex + 1];
 
     const delay = (nextFrame.wallTime - currentFrame.wallTime) || ((nextFrame.timestamp - currentFrame.timestamp) * 1000);
 
     // Cap delay to avoid long freezes (e.g. if paused for a long time during recording)
     const safeDelay = Math.min(delay, 1000);
 
-    showFrame(currentIndex + 1);
+    showFrame(currentScreencastIndex + 1);
 
     timeoutId = setTimeout(playNextFrame, safeDelay);
   }
@@ -1442,8 +2635,10 @@ function renderEnvironment(env) {
       "Connection Type": env.connectionType,
       "Timezone": env.timezone
     },
+    // Include Issue Description if available (from edits)
     "Context": {
-      "URL": env.url
+      "URL": env.url,
+      "Issue Description": (env.Context && env.Context['Issue Description']) ? env.Context['Issue Description'] : undefined
     }
   };
 
@@ -1493,6 +2688,7 @@ function renderEnvironment(env) {
 
     for (const [key, val] of Object.entries(data)) {
       if (val === undefined || val === null) continue;
+      if (key === 'Issue Description') continue; // Handle separately
 
       let currentVal = 'N/A';
       let isMatch = false;
@@ -1536,10 +2732,62 @@ function renderEnvironment(env) {
       }
     }
 
+    // Add Description Field for Context
+    if (title === 'Context') {
+      const desc = data['Issue Description'] || '';
+      if (isEditorMode) {
+        rows += `
+                <div style="margin-top: 10px; padding-top: 10px;">
+                    <div style="font-size: 11px; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 8px;">Issue Description</div>
+                    <textarea class="form-input env-desc-input" placeholder="Add a description of the issue..." style="width:100%; min-height:80px; font-family:var(--font-family); font-size:13px; resize:vertical; background:var(--bg-input); color:var(--text-main); border:1px solid var(--border-color); padding:8px;">${escapeHtml(desc)}</textarea>
+                    <button class="action-btn primary save-desc-btn" style="margin-top:8px; width:100%; justify-content:center;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                        Save Description
+                    </button>
+                </div>
+             `;
+      } else if (desc) {
+        rows += `
+                <div style="margin-top: 10px; padding-top: 10px;">
+                    <div style="font-size: 11px; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 8px;">Issue Description</div>
+                    <div style="font-size: 13px; color: var(--text-main); white-space: pre-wrap; font-family: var(--font-family);">${escapeHtml(desc)}</div>
+                </div>
+             `;
+      }
+    }
+
     card.innerHTML = `
       <h3 style="margin-top:0; font-size:14px; color:var(--primary); margin-bottom:15px;">${escapeHtml(title)}</h3>
       ${rows}
     `;
+
+    // Attach Listener for Description Save
+    if (title === 'Context' && isEditorMode) {
+      const btn = card.querySelector('.save-desc-btn');
+      const input = card.querySelector('.env-desc-input');
+      if (btn && input) {
+        btn.addEventListener('click', () => {
+          if (!currentReportData.environment) currentReportData.environment = {};
+          if (!currentReportData.environment.Context) currentReportData.environment.Context = {};
+          currentReportData.environment.Context['Issue Description'] = input.value;
+
+          // Visual feedback
+          const originalHTML = btn.innerHTML;
+          btn.innerHTML = `<span style="color:white; font-weight:bold;">Saved!</span>`;
+          btn.classList.remove('primary');
+          btn.style.background = 'var(--success)';
+          btn.style.borderColor = 'var(--success)';
+
+          setTimeout(() => {
+            btn.innerHTML = originalHTML;
+            btn.classList.add('primary');
+            btn.style.background = '';
+            btn.style.borderColor = '';
+          }, 1500);
+        });
+      }
+    }
+
     return card;
   };
 
@@ -1580,64 +2828,162 @@ function renderStorage(storageData) {
       return;
     }
 
-    keys.forEach(key => {
+    keys.forEach((key, i) => {
       const val = items[key];
       const tr = document.createElement('tr');
+      const valStr = (typeof val === 'object') ? JSON.stringify(val, null, 2) : String(val);
+      const valId = `storage-val-${type}-${i}`;
 
-      const valStr = (typeof val === 'object') ? JSON.stringify(val) : String(val);
+      let actionsHTML = createCopyBtnHTML(valId);
+
+      if (isEditorMode) {
+        actionsHTML = `
+            <div class="storage-actions" style="display:flex; gap:4px; align-items:center;">
+                ${createCopyBtnHTML(valId)}
+                <button class="action-btn edit-storage-btn" title="Edit Value" style="padding:4px; color:var(--text-main);">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                </button>
+                <button class="action-btn delete-storage-btn" title="Delete Item" style="padding:4px; color:var(--danger);">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+          `;
+      }
 
       tr.innerHTML = `
         <td style="font-family:monospace; word-break:break-all; color:var(--primary); font-weight:600; vertical-align:top;">${escapeHtml(key)}</td>
         <td style="vertical-align:top;">
-            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px;">
-                <div style="font-family:monospace; word-break:break-all; white-space:pre-wrap; flex:1; max-height: 200px; overflow-y: auto;">${escapeHtml(valStr)}</div>
-                <button class="copy-btn action-btn" title="Copy Value" style="padding:4px 8px; flex-shrink:0;">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                    </svg>
-                </button>
+            <div class="storage-value-container" style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px;">
+                <div id="${valId}" class="value-display" style="font-family:monospace; word-break:break-all; white-space:pre-wrap; flex:1; max-height: 200px; overflow-y: auto;">${escapeHtml(valStr)}</div>
+                ${actionsHTML}
             </div>
         </td>
       `;
 
-      // Add copy functionality
-      const copyBtn = tr.querySelector('.copy-btn');
-      copyBtn.addEventListener('click', () => {
-        navigator.clipboard.writeText(valStr).then(() => {
-          const originalHTML = copyBtn.innerHTML;
-          copyBtn.innerHTML = `<span style="font-size:10px; font-weight:bold; color:var(--success);">Copied!</span>`;
-          setTimeout(() => {
-            copyBtn.innerHTML = originalHTML;
-          }, 1500);
-        });
-      });
+      if (isEditorMode) {
+        const editBtn = tr.querySelector('.edit-storage-btn');
+        const deleteBtn = tr.querySelector('.delete-storage-btn');
+        const container = tr.querySelector('.storage-value-container');
+        const valueDisplay = tr.querySelector('.value-display');
+        const actionsDiv = tr.querySelector('.storage-actions');
 
+        if (editBtn) {
+          editBtn.addEventListener('click', () => {
+            valueDisplay.style.display = 'none';
+            actionsDiv.style.display = 'none';
+
+            const editContainer = document.createElement('div');
+            editContainer.style.cssText = "display:flex; flex:1; gap:10px; align-items:flex-start;";
+
+            const textarea = document.createElement('textarea');
+            textarea.className = 'form-input';
+            textarea.style.cssText = "width:100%; min-height:80px; font-family:monospace; font-size:12px; resize:vertical; background:var(--bg-input); color:var(--text-main); border:1px solid var(--border-color);";
+            textarea.value = valStr;
+
+            const saveBtn = document.createElement('button');
+            saveBtn.className = 'action-btn primary';
+            saveBtn.title = "Save Changes";
+            saveBtn.style.padding = "6px";
+            saveBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>`;
+
+            saveBtn.addEventListener('click', () => {
+              items[key] = textarea.value;
+              renderReport(currentReportData);
+            });
+
+            editContainer.appendChild(textarea);
+            editContainer.appendChild(saveBtn);
+
+            container.insertBefore(editContainer, container.firstChild);
+          });
+        }
+
+        if (deleteBtn) {
+          deleteBtn.addEventListener('click', () => {
+            if (confirm("Delete item '" + key + "'?")) {
+              delete items[key];
+              renderReport(currentReportData);
+            }
+          });
+        }
+      }
       tbody.appendChild(tr);
     });
   };
 
   // Attach listeners
   chips.forEach(chip => {
-    // Remove old listeners by cloning (hacky but effective to prevent duplicates if render called multiple times)
-    const newChip = chip.cloneNode(true);
-    chip.parentNode.replaceChild(newChip, chip);
+    // Avoid re-attaching listeners
+    if (chip.dataset.hasListener) return;
+    chip.dataset.hasListener = "true";
 
-    newChip.addEventListener('click', () => {
+    chip.addEventListener('click', () => {
       document.querySelectorAll('#storage .filter-chip').forEach(c => c.classList.remove('active'));
-      newChip.classList.add('active');
-      const type = newChip.dataset.storageType; // local, session, cookies
+      chip.classList.add('active');
+      const type = chip.dataset.storageType; // local, session, cookies
       renderTable(type);
     });
   });
 
-  // Trigger default (Local)
-  const defaultTab = document.querySelector('#storage .filter-chip[data-storage-type="local"]');
-  if (defaultTab) {
-    // Simulate click or just call render
-    // We need to set active class manually if we don't click
-    // The HTML has active class on 'local' by default.
-    renderTable('local');
-    // Ensure listeners are seemingly attached to the new nodes
+  // Render current or default
+  const activeTab = document.querySelector('#storage .filter-chip.active');
+  if (activeTab) {
+    renderTable(activeTab.dataset.storageType);
+  } else {
+    const defaultTab = document.querySelector('#storage .filter-chip[data-storage-type="local"]');
+    if (defaultTab) {
+      defaultTab.classList.add('active');
+      renderTable('local');
+    }
   }
+}
+
+function openRequestComposer(entry) {
+  const modal = document.getElementById('requestComposer');
+  if (!modal) return;
+
+  const methodSelect = document.getElementById('composerMethod');
+  const urlInput = document.getElementById('composerUrl');
+  const headersInput = document.getElementById('composerHeadersInput');
+  const bodyInput = document.getElementById('composerBodyInput');
+  const responseOutput = document.getElementById('composerResponseOutput');
+  const statusDiv = document.getElementById('composerResponseStatus');
+
+  // Reset Response
+  responseOutput.textContent = "";
+  statusDiv.textContent = "";
+
+  // Set Method & URL (Uppercase method to match select options)
+  if (methodSelect && entry.request.method) methodSelect.value = entry.request.method.toUpperCase();
+  if (urlInput) urlInput.value = entry.request.url;
+
+  // Set Headers (Convert to Key: Value string)
+  if (headersInput) {
+    const headerStr = entry.request.headers
+      .filter(h => !h.name.startsWith(':')) // Filter pseudo-headers if any
+      .map(h => `${h.name}: ${h.value}`)
+      .join('\n');
+    headersInput.value = headerStr;
+  }
+
+  // Set Body
+  if (bodyInput) {
+    if (entry.request.postData && entry.request.postData.text) {
+      // Try to pretty print if JSON
+      try {
+        const json = JSON.parse(entry.request.postData.text);
+        bodyInput.value = JSON.stringify(json, null, 2);
+      } catch (e) {
+        bodyInput.value = entry.request.postData.text;
+      }
+    } else {
+      bodyInput.value = "";
+    }
+  }
+
+  // Switch to Headers tab by default
+  const defaultTab = document.querySelector('#requestComposer .composer-tab[data-tab="reqHeaders"]');
+  if (defaultTab) defaultTab.click();
+
+  modal.style.display = 'flex';
 }

@@ -136,6 +136,49 @@
       stroke: var(--primary);
     }
 
+    .nav-item.nav-item-primary {
+      border-left: 3px solid var(--primary);
+      font-weight: 700;
+      position: relative;
+    }
+
+    .nav-item.nav-item-primary::after {
+      content: '';
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--primary);
+      opacity: 0.6;
+    }
+
+    .nav-item.nav-item-primary.active {
+      border-left-color: var(--primary);
+      background: rgba(46, 137, 255, 0.2);
+    }
+
+    .nav-item.nav-item-primary.active::after {
+      opacity: 1;
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-dot {
+
+      0%,
+      100% {
+        opacity: 1;
+        transform: translateY(-50%) scale(1);
+      }
+
+      50% {
+        opacity: 0.5;
+        transform: translateY(-50%) scale(0.7);
+      }
+    }
+
     /* Main Content */
     .main-wrapper {
       flex: 1;
@@ -208,6 +251,101 @@
 
     .action-btn.primary:hover {
       background: var(--primary-hover);
+    }
+
+    /* Timeline Details */
+    .timeline-tabs {
+      display: flex;
+      background: var(--bg-card);
+    }
+
+    .timeline-tab {
+      padding: 8px 16px;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--text-secondary);
+      border-bottom: 2px solid transparent;
+    }
+
+    .timeline-tab:hover {
+      background: var(--bg-hover);
+      color: var(--text-main);
+    }
+
+    .timeline-tab.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+      font-weight: 500;
+    }
+
+    .timeline-content {
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    .timeline-panel {
+      display: none;
+      height: 100%;
+      width: 100%;
+    }
+
+    .timeline-panel.active {
+      display: flex;
+    }
+
+    #timelineConsoleTable,
+    #timelineNetworkTable {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    #timelineConsoleTable th,
+    #timelineNetworkTable th {
+      text-align: left;
+      padding: 6px 10px;
+      background: var(--bg-card);
+      color: var(--text-secondary);
+      font-weight: 500;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    #timelineConsoleTable td,
+    #timelineNetworkTable td {
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--border-color);
+      color: var(--text-main);
+      vertical-align: top;
+    }
+
+    #timelineConsoleTable tr:hover,
+    #timelineNetworkTable tr:hover {
+      background: var(--bg-hover);
+    }
+
+    /* Empty State */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      width: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      background: var(--bg-app);
+      z-index: 50;
+      text-align: center;
+      color: var(--text-secondary);
+    }
+
+    .empty-icon {
+      margin-bottom: 20px;
+      opacity: 0.2;
+      color: var(--text-main);
     }
 
     /* Content Area */
@@ -329,6 +467,32 @@
       color: #60a5fa;
     }
 
+    [data-theme="light"] .badge-success,
+    [data-theme="light"] .status-200 {
+      background: rgba(49, 162, 76, 0.15);
+      color: #15803d;
+    }
+
+    [data-theme="light"] .badge-warn,
+    [data-theme="light"] .status-300,
+    [data-theme="light"] .status-400 {
+      background: rgba(240, 173, 78, 0.2);
+      color: #b45309;
+    }
+
+    [data-theme="light"] .badge-error,
+    [data-theme="light"] .status-500,
+    [data-theme="light"] .status-failed {
+      background: rgba(250, 56, 62, 0.15);
+      color: #dc2626;
+    }
+
+    [data-theme="light"] .badge-info,
+    [data-theme="light"] .status-100 {
+      background: rgba(46, 137, 255, 0.15);
+      color: #1d4ed8;
+    }
+
     /* Filter Bar */
     .filters-bar {
       padding: 10px 20px;
@@ -389,16 +553,36 @@
     /* Details Panel */
     .details-panel {
       width: 400px;
+      min-width: 280px;
+      max-width: 70vw;
       background: var(--bg-card);
       border-left: 1px solid var(--border-color);
       display: none;
       /* hidden by default */
       flex-direction: column;
       z-index: 30;
+      position: relative;
+      flex-shrink: 0;
     }
 
     .details-panel.open {
       display: flex;
+    }
+
+    .details-resize-handle {
+      position: absolute;
+      left: -3px;
+      top: 0;
+      width: 6px;
+      height: 100%;
+      cursor: col-resize;
+      z-index: 31;
+      transition: background 0.15s;
+    }
+
+    .details-resize-handle:hover,
+    .details-resize-handle.active {
+      background: var(--primary);
     }
 
     .details-header-bar {
@@ -443,8 +627,13 @@
       border-radius: 4px;
       font-family: 'Menlo', 'Monaco', monospace;
       font-size: 11px;
-      overflow-x: auto;
+      overflow-x: hidden;
+      /* Prevent horizontal scroll, force wrap */
       white-space: pre-wrap;
+      word-break: break-word;
+      /* Standard */
+      overflow-wrap: anywhere;
+      /* Better for long strings */
       color: var(--text-secondary);
       border: 1px solid var(--border-color);
       max-height: 250px;
@@ -477,6 +666,140 @@
     .close-icon:hover {
       opacity: 1;
     }
+
+    /* Request Composer Modal */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+    }
+
+    .modal-content {
+      background: var(--bg-card);
+      width: 700px;
+      max-width: 90%;
+      height: 80vh;
+      display: flex;
+      flex-direction: column;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+    }
+
+    .modal-header {
+      padding: 15px 20px;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-header);
+      border-radius: 8px 8px 0 0;
+    }
+
+    .modal-title {
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .modal-body {
+      flex: 1;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+
+    .form-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .form-select {
+      background: var(--bg-input);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      padding: 8px;
+      border-radius: 4px;
+      outline: none;
+    }
+
+    .form-input {
+      flex: 1;
+      background: var(--bg-input);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      padding: 8px 12px;
+      border-radius: 4px;
+      outline: none;
+    }
+
+    .composer-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border-color);
+      margin-bottom: 15px;
+    }
+
+    .composer-tab {
+      padding: 8px 16px;
+      cursor: pointer;
+      color: var(--text-secondary);
+      border-bottom: 2px solid transparent;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .composer-tab.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+
+    .composer-panel {
+      flex: 1;
+      display: none;
+      flex-direction: column;
+    }
+
+    .composer-panel.active {
+      display: flex;
+    }
+
+    .code-editor {
+      flex: 1;
+      background: var(--bg-input);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      padding: 10px;
+      font-family: monospace;
+      font-size: 12px;
+      resize: none;
+      border-radius: 4px;
+      white-space: pre;
+    }
+
+    .code-editor.readonly {
+      overflow-y: auto;
+    }
+
+    .field-label {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 5px;
+      font-weight: 600;
+    }
+
+    .response-status {
+      margin-bottom: 10px;
+      font-family: monospace;
+      font-size: 13px;
+    }
   </style>
 </head>
 
@@ -497,7 +820,15 @@
       </div>
 
       <nav class="sidebar-nav">
-        <div class="nav-item tab-btn active" data-target="environment">
+        <div class="nav-item nav-item-primary tab-btn active" data-target="timeline">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"></path>
+            <path d="M13 13l6 6"></path>
+          </svg>
+          Recording
+        </div>
+        <div class="nav-item tab-btn" data-target="environment">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
             <line x1="12" y1="20" x2="12" y2="10"></line>
@@ -532,22 +863,6 @@
           </svg>
           Storage
         </div>
-        <div class="nav-item tab-btn" data-target="timeline">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"></path>
-            <path d="M13 13l6 6"></path>
-          </svg>
-          User Events
-        </div>
-        <div class="nav-item tab-btn" data-target="screen">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
-            <path d="M23 7l-7 5 7 5V7z"></path>
-            <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
-          </svg>
-          Recording
-        </div>
         <div class="nav-item tab-btn" data-target="issues">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
@@ -573,7 +888,8 @@
     <!-- MAIN CONTENT -->
     <main class="main-wrapper">
       <header class="top-header">
-        <div class="report-meta">
+        <!-- Left: Import & Date -->
+        <div class="header-left" style="display:flex; align-items:center; gap:12px;">
           <button id="importBtn" class="action-btn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -584,11 +900,35 @@
           </button>
           <span class="report-title" id="reportDate"></span>
         </div>
-        <div class="header-actions">
+
+        <!-- Center: Editor Mode -->
+        <div class="header-center" style="display:flex; align-items:center; justify-content:center; flex:1;">
+          <button id="editorModeBtn" class="action-btn" title="Toggle Editor Mode"
+            style="border: 1px solid var(--primary); color: var(--primary); background: rgba(46, 137, 255, 0.1);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+            Editor Mode
+          </button>
+        </div>
+
+        <!-- Right: Actions -->
+        <div class="header-right" style="display:flex; align-items:center; gap:10px;">
           <button id="themeToggle" class="action-btn" title="Toggle Dark Mode">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
             </svg>
+          </button>
+          <button id="shareBtn" class="action-btn" title="Share via Webhook">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="18" cy="5" r="3"></circle>
+              <circle cx="6" cy="12" r="3"></circle>
+              <circle cx="18" cy="19" r="3"></circle>
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+            </svg>
+            Share
           </button>
           <button id="downloadBtn" class="action-btn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -598,8 +938,8 @@
             </svg>
             Export
           </button>
-          <button id="replayBtn" class="action-btn primary">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button id="replayBtn" class="action-btn primary" style="padding: 8px 20px; font-size: 14px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polygon points="5 3 19 12 5 21 5 3"></polygon>
             </svg>
             Replay
@@ -608,15 +948,38 @@
         </div>
       </header>
 
-      <input type="file" id="fileInput" accept=".json" style="display:none;">
+      <input type="file" id="fileInput" accept=".json, .zip" style="display:none;">
 
       <div class="content-area">
+        <div id="emptyState" class="empty-state">
+          <svg class="empty-icon" width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="12" y1="18" x2="12" y2="12"></line>
+            <line x1="9" y1="15" x2="15" y2="15"></line>
+          </svg>
+          <h2 style="margin-top:0; color:var(--text-main); font-size:20px; font-weight:600;">No Report Loaded</h2>
+          <p style="margin:10px 0 25px; max-width:400px; line-height:1.5;">
+            Import a JSON or ZIP bug report file to start debugging.
+          </p>
+          <button id="mainImportBtn" class="action-btn primary" style="padding:10px 24px; font-size:15px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              style="margin-right:8px;">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            Import Report
+          </button>
+        </div>
 
         <!-- Environment -->
-        <div id="environment" class="tab-content active" style="padding: 20px; overflow-y: auto;">
+        <div id="environment" class="tab-content" style="padding: 20px; overflow-y: auto;">
           <h2 style="margin-top:0; margin-bottom:20px; font-size:18px; color:var(--text-main);">Environment Details</h2>
           <div id="envGrid"
-            style="display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:20px;"></div>
+            style="display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:20px;">
+          </div>
         </div>
 
         <!-- Console -->
@@ -668,7 +1031,8 @@
           <div class="filters-bar">
             <input type="text" id="networkSearch" class="search-input" placeholder="Filter URL...">
             <div class="filter-chip active"
-              style="background:var(--primary); color:white; border-color:var(--primary);">All</div>
+              style="background:var(--primary); color:white; border-color:var(--primary);">All
+            </div>
             <div class="filter-chip">Fetch/XHR</div>
             <div class="filter-chip">JS</div>
             <div class="filter-chip">CSS</div>
@@ -703,6 +1067,7 @@
                       style="margin-left:5px; opacity:0.5;">
                       <path d="M7 15l5 5 5-5M7 9l5-5 5 5" />
                     </svg></th>
+                  <th style="width:60px;">Action</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -711,8 +1076,25 @@
         </div>
 
         <!-- Timeline -->
-        <div id="timeline" class="tab-content">
-          <div style="display:flex; height:100%; overflow:hidden;">
+        <div id="timeline" class="tab-content active" style="flex-direction:column; overflow:hidden;">
+          <div
+            style="flex:0 0 auto; border-bottom:1px solid var(--border-color); background:var(--bg-card); padding:10px; z-index:10;">
+            <div style="display:flex; align-items:center; gap:15px; max-width:900px; margin:0 auto;">
+              <button id="playBtn" class="action-btn primary"
+                style="width:80px; display:flex; align-items:center; justify-content:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg> Play
+              </button>
+              <span id="timeDisplay" style="font-family:monospace;">00:00</span>
+              <input type="range" id="scrubber" min="0" max="100" value="0" style="flex:1;">
+            </div>
+            <div
+              style="text-align:center; background:#000; margin-top:10px; min-height:0; max-height:300px; overflow:hidden; display:flex; align-items:center; justify-content:center;">
+              <img id="screenPlayer" style="max-width:100%; max-height:300px; display:block;">
+            </div>
+          </div>
+          <div style="display:flex; flex:1; overflow:hidden;">
             <div style="flex:0 0 450px; border-right:1px solid var(--border-color); overflow-y:auto;">
               <table id="timelineTable">
                 <thead>
@@ -725,13 +1107,91 @@
                 <tbody></tbody>
               </table>
             </div>
-            <div style="flex:1; display:flex; flex-direction:column; background:var(--bg-app); overflow-y:auto;">
-              <div class="timeline-header">State Preview</div>
-              <div style="background:black; padding:20px; display:flex; justify-content:center; align-items:center;">
-                <img id="previewImage" style="max-width:100%; max-height:350px; box-shadow:0 4px 15px rgba(0,0,0,0.5);">
+            <div class="timeline-detail-panel"
+              style="flex:1; display:flex; flex-direction:column; background:var(--bg-app); overflow:hidden;">
+
+              <!-- Detail Header -->
+              <div id="timelineDetailHeader"
+                style="padding:10px 15px; border-bottom:1px solid var(--border-color); background:var(--bg-card); font-weight:600;">
+                Select an event to view details
               </div>
-              <div class="timeline-header">Context Analysis</div>
-              <div id="previewContext" style="padding:15px; color:var(--text-main);"></div>
+
+              <!-- Detail Tabs -->
+              <div class="timeline-tabs"
+                style="display:flex; border-bottom:1px solid var(--border-color); background:var(--bg-app);">
+                <div class="timeline-tab active" data-tab="console">Console</div>
+                <div class="timeline-tab" data-tab="network">Network</div>
+              </div>
+
+              <!-- Detail Content -->
+              <div class="timeline-content" style="flex:1; overflow-y:auto; position:relative;">
+
+                <!-- Console Panel -->
+                <div id="timeline-console" class="timeline-panel active" style="flex-direction:column;">
+                  <div class="filters-bar"
+                    style="border-bottom:1px solid var(--border-color); padding:5px 10px; background:var(--bg-app);">
+                    <input type="text" id="timelineConsoleSearch" class="search-input" placeholder="Search logs..."
+                      style="width:200px; height:28px; font-size:12px;">
+                    <div class="filter-chip active timeline-console-filter" data-filter="all"
+                      style="padding:2px 8px; font-size:11px;">All</div>
+                    <div class="filter-chip timeline-console-filter" data-filter="error"
+                      style="padding:2px 8px; font-size:11px;">Errors</div>
+                    <div class="filter-chip timeline-console-filter" data-filter="warning"
+                      style="padding:2px 8px; font-size:11px;">Warnings</div>
+                    <div class="filter-chip timeline-console-filter" data-filter="log"
+                      style="padding:2px 8px; font-size:11px;">Logs</div>
+                  </div>
+                  <div class="table-container" style="flex:1; overflow:auto;">
+                    <table id="timelineConsoleTable" style="font-size:12px;">
+                      <thead>
+                        <tr>
+                          <th style="width:80px;">Time</th>
+                          <th style="width:60px;">Level</th>
+                          <th>Message</th>
+                        </tr>
+                      </thead>
+                      <tbody></tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- Network Panel -->
+                <div id="timeline-network" class="timeline-panel" style="flex-direction:column;">
+                  <div class="filters-bar"
+                    style="border-bottom:1px solid var(--border-color); padding:5px 10px; background:var(--bg-app);">
+                    <input type="text" id="timelineNetworkSearch" class="search-input" placeholder="Filter URL..."
+                      style="width:200px; height:28px; font-size:12px;">
+                    <div class="filter-chip active timeline-network-filter" data-filter="all"
+                      style="padding:2px 8px; font-size:11px;">All</div>
+                    <div class="filter-chip timeline-network-filter" data-filter="Fetch/XHR"
+                      style="padding:2px 8px; font-size:11px;">XHR</div>
+                    <div class="filter-chip timeline-network-filter" data-filter="JS"
+                      style="padding:2px 8px; font-size:11px;">JS</div>
+                    <div class="filter-chip timeline-network-filter" data-filter="CSS"
+                      style="padding:2px 8px; font-size:11px;">CSS</div>
+                    <div class="filter-chip timeline-network-filter" data-filter="Img"
+                      style="padding:2px 8px; font-size:11px;">Img</div>
+                    <div class="filter-chip timeline-network-filter" data-filter="Media"
+                      style="padding:2px 8px; font-size:11px;">Media</div>
+                  </div>
+                  <div class="table-container" style="flex:1; overflow:auto;">
+                    <table id="timelineNetworkTable" style="font-size:12px;">
+                      <thead>
+                        <tr>
+                          <th style="width:80px;">Time</th>
+                          <th style="width:60px;">Method</th>
+                          <th>Name</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody></tbody>
+                    </table>
+                  </div>
+                </div>
+
+
+
+              </div>
             </div>
           </div>
         </div>
@@ -758,28 +1218,7 @@
           </div>
         </div>
 
-        <!-- Screen -->
-        <div id="screen" class="tab-content">
-          <div
-            style="display:flex; flex-direction:column; align-items:center; padding:20px; height:100%; justify-content:center;">
-            <div
-              style="width:100%; max-width:800px; display:flex; align-items:center; gap:15px; background:var(--bg-card); padding:10px 20px; border-radius:8px; border:1px solid var(--border-color); margin-bottom:20px;">
-              <button id="playBtn" class="action-btn primary"
-                style="width:80px; display:flex; align-items:center; justify-content:center; gap:6px;">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                  <polygon points="5 3 19 12 5 21 5 3" />
-                </svg>
-                Play
-              </button>
-              <span id="timeDisplay" style="font-family:monospace;">00:00</span>
-              <input type="range" id="scrubber" min="0" max="100" value="0" style="flex:1;">
-            </div>
-            <div
-              style="border:1px solid var(--border-color); padding:5px; background:#000; border-radius:6px; max-height:100%;">
-              <img id="screenPlayer" style="max-width:100%; max-height:calc(100vh - 200px); display:block;">
-            </div>
-          </div>
-        </div>
+
 
         <!-- Issues -->
         <div id="issues" class="tab-content" style="padding:20px; overflow-y:auto;">
@@ -796,6 +1235,7 @@
 
     <!-- RIGHT DETAILS PANEL -->
     <aside class="details-panel" id="detailPanel">
+      <div class="details-resize-handle" id="detailResizeHandle"></div>
       <div class="details-header-bar">
         <div class="details-title" id="modalTitle">Details</div>
         <svg class="close-icon" id="closeDetailBtn" width="20" height="20" viewBox="0 0 24 24" fill="none"
@@ -839,8 +1279,274 @@
     <!-- Hidden Elements to keep JS from crashing if it looks for them -->
     <div id="detailModal" style="display:none;"></div>
 
+    <!-- REQUEST COMPOSER MODAL -->
+    <div id="requestComposer" class="modal-overlay" style="display:none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div class="modal-title">Request Composer</div>
+          <svg class="close-icon" id="closeComposerBtn" width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <select id="composerMethod" class="form-select">
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+              <option value="PUT">PUT</option>
+              <option value="DELETE">DELETE</option>
+              <option value="PATCH">PATCH</option>
+              <option value="HEAD">HEAD</option>
+              <option value="OPTIONS">OPTIONS</option>
+            </select>
+            <input type="text" id="composerUrl" class="form-input" placeholder="Request URL">
+            <button id="sendRequestBtn" class="action-btn primary">Send</button>
+          </div>
+
+          <div class="composer-tabs">
+            <div class="composer-tab active" data-tab="reqHeaders">Headers</div>
+            <div class="composer-tab" data-tab="reqBody">Body</div>
+            <div class="composer-tab" data-tab="response">Response</div>
+          </div>
+
+          <div id="composer-reqHeaders" class="composer-panel active">
+            <div class="field-label">Request Headers (Key: Value)</div>
+            <textarea id="composerHeadersInput" class="code-editor"
+              placeholder="Content-Type: application/json&#10;Authorization: Bearer token..."></textarea>
+          </div>
+
+          <div id="composer-reqBody" class="composer-panel">
+            <div class="field-label">Request Body</div>
+            <textarea id="composerBodyInput" class="code-editor"
+              placeholder="{ &quot;key&quot;: &quot;value&quot; }"></textarea>
+          </div>
+
+          <div id="composer-response" class="composer-panel">
+            <div class="response-status" id="composerResponseStatus"></div>
+
+            <div class="field-label" style="margin-top:10px;">Response Headers</div>
+            <div class="code-editor readonly" id="composerResponseHeaders"
+              style="height:100px; margin-bottom:15px; flex: none;">
+            </div>
+
+            <div class="field-label">Response Body</div>
+            <div class="code-editor readonly" id="composerResponseOutput" style="flex:1;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- WEBHOOK SHARE MODAL -->
+    <div id="webhookModal" class="modal-overlay" style="display:none;">
+      <div class="modal-content" style="width:600px; max-height:80vh;">
+        <div class="modal-header">
+          <div class="modal-title" style="display:flex; align-items:center; gap:8px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="18" cy="5" r="3"></circle>
+              <circle cx="6" cy="12" r="3"></circle>
+              <circle cx="18" cy="19" r="3"></circle>
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+            </svg>
+            Share via Webhook
+          </div>
+          <svg class="close-icon" id="closeWebhookBtn" width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" style="cursor:pointer;">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </div>
+        <div class="modal-body" style="gap:15px;">
+
+          <div>
+            <div class="field-label">Webhook URL</div>
+            <input type="text" id="webhookUrl" class="form-input" placeholder="https://hooks.example.com/webhook"
+              style="width:100%;">
+          </div>
+
+          <div>
+            <div class="field-label">HTTP Method</div>
+            <select id="webhookMethod" class="form-select" style="width:100%;">
+              <option value="POST" selected>POST</option>
+              <option value="PUT">PUT</option>
+              <option value="PATCH">PATCH</option>
+            </select>
+          </div>
+
+          <div>
+            <div class="field-label">Custom Headers <span
+                style="font-weight:400; color:var(--text-secondary); font-size:11px;">(optional, one per line: Key:
+                Value)</span></div>
+            <textarea id="webhookHeaders" class="code-editor"
+              style="width:100%; min-height:100px; height:100px; resize:vertical;"
+              placeholder="Authorization: Bearer your-token&#10;X-Custom-Header: value"></textarea>
+          </div>
+
+          <div style="flex:1; display:flex; flex-direction:column; min-height:0;">
+            <div class="field-label">FormData Fields <span
+                style="font-weight:400; color:var(--text-secondary); font-size:11px;">(JSON — keys become field names,
+                values support variables)</span></div>
+            <textarea id="webhookPayload" class="code-editor" style="flex:1; min-height:120px; resize:vertical;"
+              placeholder='{ "file": "%export%", "screenshot": "%screenshot%", "text": "Bug report" }'>{
+  "file": "%export%",
+  "screenshot": "%screenshot%",
+  "text": "New debug report"
+}</textarea>
+          </div>
+
+          <div
+            style="background:var(--bg-input); border:1px solid var(--border-color); border-radius:6px; padding:12px;">
+            <div
+              style="font-size:12px; font-weight:700; color:var(--text-main); margin-bottom:8px; display:flex; align-items:center; gap:6px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="16" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
+              Available Variables
+            </div>
+            <div style="display:flex; flex-direction:column; gap:6px; font-size:12px;">
+              <div style="color:var(--text-secondary);">Sent as <code
+                  style="background:rgba(46,137,255,0.15); color:var(--primary); padding:1px 6px; border-radius:3px; font-size:11px;">multipart/form-data</code>
+                &mdash; each key becomes a form field.</div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <code
+                  style="background:rgba(46,137,255,0.15); color:var(--primary); padding:2px 8px; border-radius:4px; font-weight:600; font-size:11px; white-space:nowrap;">%export%</code>
+                <span style="color:var(--text-secondary);">Attached as compressed report file (.zip)</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <code
+                  style="background:rgba(46,137,255,0.15); color:var(--primary); padding:2px 8px; border-radius:4px; font-weight:600; font-size:11px; white-space:nowrap;">%screenshot%</code>
+                <span style="color:var(--text-secondary);">Attached as current recording frame (.jpg)</span>
+              </div>
+              <div style="color:var(--text-secondary); font-style:italic; font-size:11px; margin-top:2px;">
+                Other values are sent as text fields. Use any key name your webhook expects.
+              </div>
+            </div>
+          </div>
+
+          <div id="webhookStatus"
+            style="display:none; padding:10px; border-radius:6px; font-size:13px; font-family:monospace;"></div>
+
+          <button id="sendWebhookBtn" class="action-btn primary"
+            style="width:100%; justify-content:center; padding:10px; font-size:14px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              style="margin-right:8px;">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+            Send to Webhook
+          </button>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- REPLAY CONFIGURATION MODAL -->
+    <div id="replayConfigModal" class="modal-overlay" style="display:none;">
+      <div class="modal-content" style="width:800px; height:700px;">
+        <div class="modal-header">
+          <div class="modal-title">Replay Configuration</div>
+          <svg class="close-icon" id="closeReplayConfigBtn" width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </div>
+        <div class="modal-body">
+
+          <div class="composer-tabs">
+            <div class="composer-tab active" data-tab="replaySetup">General</div>
+            <div class="composer-tab" data-tab="replayLocal">Local Storage</div>
+            <div class="composer-tab" data-tab="replaySession">Session Storage</div>
+            <div class="composer-tab" data-tab="replayCookies">Cookies</div>
+            <div class="composer-tab" data-tab="replayRequests">Pre-flight Requests</div>
+          </div>
+
+          <!-- Setup Tab -->
+          <div id="replay-replaySetup" class="composer-panel active">
+            <div class="field-label">Target URL</div>
+            <input type="text" id="replayUrlInput" class="form-input"
+              style="width:100%; margin-bottom:15px; flex:none; height:36px;" placeholder="https://example.com/app">
+
+            <div class="field-label" style="margin-bottom:10px;">Options</div>
+            <label
+              style="display:flex; align-items:center; gap:8px; margin-bottom:10px; color:var(--text-main); font-size:13px;">
+              <input type="checkbox" id="replayClearStorageCheck" checked> Clear existing storage before injection
+            </label>
+            <div style="font-size:13px; color:var(--text-secondary); line-height:1.5;">
+              Configure the environment before replaying events. You can inject specific authentication tokens into
+              Local/Session storage or Cookies.
+              You can also define a sequence of AJAX requests to be executed (e.g., to fetch a fresh token) before the
+              replay starts.
+            </div>
+          </div>
+
+          <!-- Local Storage Tab -->
+          <div id="replay-replayLocal" class="composer-panel">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+              <div class="field-label" style="margin:0;">Local Storage Items</div>
+              <button id="addLocalBtn" class="action-btn" style="padding:6px 12px; font-size:12px;">+ Add Item</button>
+            </div>
+            <div id="storageListLocal" style="flex:1; overflow-y:auto; padding-right:5px;">
+            </div>
+          </div>
+
+          <!-- Session Storage Tab -->
+          <div id="replay-replaySession" class="composer-panel">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+              <div class="field-label" style="margin:0;">Session Storage Items</div>
+              <button id="addSessionBtn" class="action-btn" style="padding:6px 12px; font-size:12px;">+ Add
+                Item</button>
+            </div>
+            <div id="storageListSession" style="flex:1; overflow-y:auto; padding-right:5px;">
+            </div>
+          </div>
+
+          <!-- Cookies Tab -->
+          <div id="replay-replayCookies" class="composer-panel">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+              <div class="field-label" style="margin:0;">Cookies</div>
+              <button id="addCookieBtn" class="action-btn" style="padding:6px 12px; font-size:12px;">+ Add
+                Cookie</button>
+            </div>
+            <div id="storageListCookies" style="flex:1; overflow-y:auto; padding-right:5px;">
+            </div>
+          </div>
+
+          <!-- Pre-flight Requests Tab -->
+          <div id="replay-replayRequests" class="composer-panel">
+            <div class="field-label">Pre-flight AJAX Requests Builder</div>
+            <div style="margin-bottom:10px; font-size:12px; color:var(--text-secondary);">
+              Define requests to run before replay (e.g. for authentication).
+            </div>
+
+            <div id="requestList" style="flex:1; overflow-y:auto; padding-right:5px; margin-bottom:10px;">
+              <!-- Request Items will be added here -->
+            </div>
+
+            <button id="addReplayRequestBtn" class="action-btn" style="align-self:flex-start;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                style="margin-right:5px;">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              Add Request
+            </button>
+          </div>
+
+          <div style="margin-top:20px; text-align:right;">
+            <button id="startReplayBtn" class="action-btn primary" style="padding:10px 20px;">Start Replay With
+              Context</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
+  <script src="jszip.min.js"></script>
   <script src="viewer.js"></script>
   <script src="jira-helper.js"></script>
 </body>

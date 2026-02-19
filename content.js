@@ -42,7 +42,6 @@
   let originalBorder = "";
   let editorPopup = null;
   let activeReportCleanup = null;
-  let showClicks = true; // Default
 
   // 2. Create Widget
   const floatingWidget = document.createElement('div');
@@ -354,8 +353,9 @@
   }
 
   // Global settings variables
-  // let showClicks = true; // Moved to top
+  let showClicks = true;
   let clickSize = 20;
+  let clickColor = '#fa383e';
 
   // Initial settings load
   chrome.storage.local.get(['settings'], (result) => {
@@ -364,6 +364,7 @@
 
       if (settings.showClicks !== undefined) showClicks = settings.showClicks;
       if (settings.clickSize) clickSize = settings.clickSize;
+      if (settings.clickColor) clickColor = settings.clickColor;
 
       // FORCE DISABLE AutoRecord (Instant Replay) as per request
       if (settings.autoRecord) {
@@ -399,7 +400,8 @@
           updateWidgetVisibility();
         }
         if (newSettings.showClicks !== undefined) showClicks = newSettings.showClicks;
-        if (newSettings.clickSize) clickSize = newSettings.clickSize;
+        if (newSettings.clickSize) clickSize = parseInt(newSettings.clickSize) || 20;
+        if (newSettings.clickColor) clickColor = newSettings.clickColor;
       }
     }
   });
@@ -921,30 +923,31 @@
     // Visual Ripple Effect
     const size = clickSize;
     const half = size / 2;
+    const color = clickColor || '#fa383e'; // Fallback
 
     const ripple = document.createElement('div');
-    ripple.style.position = 'fixed';
-    ripple.style.left = (e.clientX - half) + 'px';
-    ripple.style.top = (e.clientY - half) + 'px';
-    ripple.style.width = size + 'px';
-    ripple.style.height = size + 'px';
-    ripple.style.background = 'rgba(255, 0, 0, 0.5)';
-    ripple.style.borderRadius = '50%';
-    ripple.style.pointerEvents = 'none'; // Don't block clicks
-    ripple.style.zIndex = '999999';
-    ripple.style.transition = 'transform 0.3s ease-out, opacity 0.3s ease-out';
+    ripple.style.cssText = `
+      position: fixed;
+      left: ${e.clientX - half}px;
+      top: ${e.clientY - half}px;
+      width: ${size}px;
+      height: ${size}px;
+      background-color: ${color} !important;
+      opacity: 0.6;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 2147483647;
+      transition: transform 0.4s ease-out, opacity 0.4s ease-out;
+    `;
     document.body.appendChild(ripple);
 
-    // Animate
     requestAnimationFrame(() => {
-      ripple.style.transform = 'scale(2)';
+      ripple.style.transform = 'scale(1.5)';
       ripple.style.opacity = '0';
+      setTimeout(() => ripple.remove(), 400);
     });
 
-    // Remove after animation
-    setTimeout(() => {
-      document.body.removeChild(ripple);
-    }, 300);
+
 
     chrome.runtime.sendMessage({
       action: "recordUserEvent",
