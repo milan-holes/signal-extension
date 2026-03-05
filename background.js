@@ -6,6 +6,9 @@ let settings = {
 };
 let stoppedTabs = new Set();
 
+// Replay state tracking per tab
+let replayState = {};
+
 // Load settings
 chrome.storage.local.get(['settings'], (result) => {
   if (result.settings) {
@@ -571,19 +574,213 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             }
 
             if (request.context) {
-              await setupReplayEnvironment(tabId, request.context);
-              // Reload to apply storage/cookies fully
+              await setupReplayEnvironment(tabId, request.context, request.url);
               await sendCommand(tabId, "Page.reload");
-              // Wait for reload (executeReplay has its own warmup, but let's give it a moment)
               await new Promise(r => setTimeout(r, 2000));
             }
 
-            executeReplay(tabId, request.events);
+            // Filter replayable events
+            const replayable = request.events.filter(e => ['click', 'input'].includes(e.type));
+            const autoStart = request.autoStart === true;
+            const defaultDelay = request.defaultDelay !== undefined ? request.defaultDelay : null;
+
+            // Store replay state (but don't start yet, unless autoStart)
+            replayState[tabId] = {
+              isPaused: false,
+              isCancelled: false,
+              skipWait: false,
+              customDelay: defaultDelay,
+              events: replayable,
+              originalUrl: request.url,
+              originalContext: request.context || null,
+              originalAutoStart: autoStart,
+              isFinished: false,
+              isStarted: autoStart
+            };
+
+            // Hide the recording widget
+            chrome.tabs.sendMessage(tabId, { action: "setWidgetVisibility", visible: false });
+
+            // Inject widget in ready mode (or executing mode if autoStart)
+            await waitForContentScript(tabId);
+            chrome.tabs.sendMessage(tabId, {
+              action: "replayWidgetInit",
+              events: replayable,
+              tabId: tabId,
+              readyMode: !autoStart,
+              defaultDelay: defaultDelay
+            });
+
+            if (autoStart) {
+              executeReplay(tabId, replayable);
+            }
           });
         }
       };
       chrome.tabs.onUpdated.addListener(onUpdated);
     });
+    return true;
+  }
+
+  if (request.action === "replayStart") {
+    const tabId = request.tabId;
+    const state = replayState[tabId];
+    if (state && !state.isStarted) {
+      state.isStarted = true;
+      executeReplay(tabId, state.events);
+    }
+    sendResponse({ status: "started" });
+    return true;
+  }
+
+  if (request.action === "replayRestart") {
+    const tabId = request.tabId;
+    const state = replayState[tabId];
+    if (!state) { sendResponse({ status: "no_state" }); return true; }
+
+    const url = state.originalUrl;
+    const events = state.events;
+    const context = state.originalContext;
+    const autoStart = state.originalAutoStart || false;
+    const defaultDelay = state.customDelay;
+
+    // Reset state
+    replayState[tabId] = {
+      isPaused: false,
+      isCancelled: false,
+      skipWait: false,
+      customDelay: defaultDelay,
+      events: events,
+      originalUrl: url,
+      originalContext: context,
+      originalAutoStart: autoStart,
+      isFinished: false,
+      isStarted: autoStart
+    };
+
+    // Navigate to original URL
+    chrome.tabs.update(tabId, { url: url }, () => {
+      const onUpdated = (tId, info) => {
+        if (tId === tabId && info.status === 'complete') {
+          chrome.tabs.onUpdated.removeListener(onUpdated);
+          (async () => {
+            if (context) {
+              await setupReplayEnvironment(tabId, context, url);
+              await sendCommand(tabId, "Page.reload");
+              await new Promise(r => setTimeout(r, 2000));
+            }
+
+            // Re-inject widget in ready mode (unless autoStart)
+            await waitForContentScript(tabId);
+            chrome.tabs.sendMessage(tabId, {
+              action: "replayWidgetInit",
+              events: events,
+              tabId: tabId,
+              readyMode: !autoStart,
+              defaultDelay: defaultDelay
+            });
+            chrome.tabs.sendMessage(tabId, { action: "setWidgetVisibility", visible: false });
+
+            if (autoStart) {
+              executeReplay(tabId, events);
+            }
+          })();
+        }
+      };
+      chrome.tabs.onUpdated.addListener(onUpdated);
+    });
+    sendResponse({ status: "restarting" });
+    return true;
+  }
+
+  if (request.action === "replayRemoveEvent") {
+    const tabId = request.tabId;
+    const state = replayState[tabId];
+    if (state && !state.isStarted && request.eventIndex >= 0 && request.eventIndex < state.events.length) {
+      state.events.splice(request.eventIndex, 1);
+    }
+    sendResponse({ status: "removed", remaining: state ? state.events.length : 0, events: state ? state.events : [] });
+    return true;
+  }
+
+  if (request.action === "replayPause") {
+    const tabId = request.tabId;
+    if (replayState[tabId]) {
+      replayState[tabId].isPaused = true;
+    }
+    sendResponse({ status: "paused" });
+    return true;
+  }
+
+  if (request.action === "replayResume") {
+    const tabId = request.tabId;
+    if (replayState[tabId]) {
+      replayState[tabId].isPaused = false;
+    }
+    sendResponse({ status: "resumed" });
+    return true;
+  }
+
+  if (request.action === "replayRetry") {
+    const tabId = request.tabId;
+    const eventIndex = request.eventIndex;
+    if (replayState[tabId] && replayState[tabId].events && replayState[tabId].events[eventIndex]) {
+      const event = replayState[tabId].events[eventIndex];
+      replayRetryEvent(tabId, event, eventIndex);
+    }
+    sendResponse({ status: "retrying" });
+    return true;
+  }
+
+  if (request.action === "replaySkip") {
+    const tabId = request.tabId;
+    if (replayState[tabId]) {
+      replayState[tabId].skipWait = true;
+    }
+    sendResponse({ status: "skipped" });
+    return true;
+  }
+
+  if (request.action === "replayCancel") {
+    const tabId = request.tabId;
+    if (replayState[tabId]) {
+      replayState[tabId].isCancelled = true;
+      replayState[tabId].isPaused = false; // unpause so the loop can exit
+    }
+    sendResponse({ status: "cancelled" });
+    return true;
+  }
+
+  if (request.action === "replaySetDelay") {
+    const tabId = request.tabId;
+    if (replayState[tabId]) {
+      replayState[tabId].customDelay = request.delay; // null = original, number = ms
+    }
+    sendResponse({ status: "ok" });
+    return true;
+  }
+
+  if (request.action === "replaySkipFailed") {
+    const tabId = request.tabId;
+    if (replayState[tabId]) {
+      replayState[tabId].skipFailed = true;
+    }
+    sendResponse({ status: "skipped" });
+    return true;
+  }
+
+  if (request.action === "replayClose") {
+    const tabId = request.tabId;
+    if (replayState[tabId]) {
+      delete replayState[tabId];
+    }
+    // Remove widget from page via content script
+    chrome.tabs.sendMessage(tabId, { action: "replayWidgetRemove" });
+    // Detach debugger
+    try {
+      chrome.debugger.detach({ tabId: tabId });
+    } catch (e) { }
+    sendResponse({ status: "closed" });
     return true;
   }
 });
@@ -697,7 +894,8 @@ function generateReport(data) {
             bodySize: -1
           } : { status: 0, statusText: "", httpVersion: "", headers: [], content: {}, redirectURL: "", headersSize: -1, bodySize: -1 },
           cache: {},
-          timings: { send: 0, wait: 0, receive: time }
+          timings: { send: 0, wait: 0, receive: time },
+          _initiator: entry.initiator || null
         };
       })
     }
@@ -860,6 +1058,86 @@ chrome.debugger.onDetach.addListener((source, reason) => {
   console.log("Debugger detached", reason);
 });
 
+// ── Replay Widget (via Content Script Messaging) ─────────────────────
+
+// Ensure content script is ready to receive messages
+async function waitForContentScript(tabId, maxRetries = 20) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const ok = await new Promise((resolve, reject) => {
+        chrome.tabs.sendMessage(tabId, { action: "ping" }, (res) => {
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+          } else {
+            resolve(true);
+          }
+        });
+      });
+      return true;
+    } catch (e) {
+      await sleep(500);
+    }
+  }
+  // Fallback: inject content script programmatically
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      files: ['content.js']
+    });
+    await sleep(500);
+    return true;
+  } catch (e) {
+    console.warn("Could not inject content script:", e);
+    return false;
+  }
+}
+
+async function injectReplayWidget(tabId, events) {
+  // Wait until content script is loaded and responsive
+  await waitForContentScript(tabId);
+
+  chrome.tabs.sendMessage(tabId, {
+    action: "replayWidgetInit",
+    events: events,
+    tabId: tabId
+  });
+}
+
+async function updateReplayWidgetEvent(tabId, index, status, total) {
+  chrome.tabs.sendMessage(tabId, {
+    action: "replayWidgetUpdate",
+    index: index,
+    status: status,
+    total: total
+  });
+}
+
+async function showReplayWidgetFinished(tabId, total, errorCount) {
+  chrome.tabs.sendMessage(tabId, {
+    action: "replayWidgetFinished",
+    total: total,
+    errorCount: errorCount
+  });
+}
+
+function highlightReplayTarget(tabId, event, index) {
+  chrome.tabs.sendMessage(tabId, {
+    action: "replayHighlightTarget",
+    event: event,
+    index: index
+  });
+}
+
+function clearReplayHighlight(tabId) {
+  // Send null event to clear highlight
+  chrome.tabs.sendMessage(tabId, {
+    action: "replayHighlightTarget",
+    event: null,
+    index: 0
+  });
+}
+
+
 async function executeReplay(tabId, events) {
   // Enable domains for reliable execution and navigation tracking
   try {
@@ -869,37 +1147,26 @@ async function executeReplay(tabId, events) {
     await sendCommand(tabId, "Network.enable");
   } catch (e) { console.warn("Replay domain enable failed", e); }
 
-  const replayable = events.filter(e => ['click', 'input'].includes(e.type));
+  const replayable = events;
 
-  // Hide widget
-  chrome.tabs.sendMessage(tabId, { action: "setWidgetVisibility", visible: false });
-
-  // Show Notification Banner
-  try {
-    await sendCommand(tabId, "Runtime.evaluate", {
-      expression: `
-            (function() {
-                var badge = document.createElement('div');
-                badge.style.cssText = 'position:fixed; top:10px; right:10px; background:#0078d4; color:white; padding:10px 20px; border-radius:4px; z-index:2147483647; font-family:sans-serif; box-shadow:0 2px 10px rgba(0,0,0,0.2); pointer-events:none; font-weight:bold;';
-                badge.id = 'replay-badge';
-                badge.innerText = 'Replaying Events...';
-                document.body.appendChild(badge);
-            })();
-        `
-    });
-  } catch (e) { }
+  // Tell widget to switch from ready mode to executing mode
+  chrome.tabs.sendMessage(tabId, { action: "replayWidgetStarted" });
 
   if (replayable.length === 0) {
-    showReplayFinished(tabId, 0);
+    await showReplayWidgetFinished(tabId, 0, 0);
+    if (replayState[tabId]) replayState[tabId].isFinished = true;
     return;
   }
 
-  // Navigation Tracking
+  // Navigation Tracking — only track main frame navigations
   let isNavigating = false;
+  let lastNavTime = 0;
   const navHandler = (source, method, params) => {
     if (source.tabId === tabId) {
-      if (method === "Network.requestWillBeSent" && params.type === "Document") {
+      if (method === "Page.frameNavigated" && (!params.frame.parentId)) {
+        // Main frame navigation started
         isNavigating = true;
+        lastNavTime = Date.now();
       }
       if (method === "Page.loadEventFired") {
         isNavigating = false;
@@ -910,63 +1177,264 @@ async function executeReplay(tabId, events) {
 
   replayable.sort((a, b) => a.timestamp - b.timestamp);
   const startTime = replayable[0].timestamp;
+  let errorCount = 0;
+  let completedCount = 0;
+  let handledNavTime = 0;
 
   for (let i = 0; i < replayable.length; i++) {
+    // Check cancel
+    if (replayState[tabId] && replayState[tabId].isCancelled) break;
+
     const event = replayable[i];
     const prevTime = (i === 0) ? startTime : replayable[i - 1].timestamp;
 
-    // Wait for delta
-    let delta = Math.max(0, event.timestamp - prevTime);
-    if (i === 0) delta = 5000; // warmup: Wait 5s for SPA loading
-
-    await sleep(delta);
-
-    // If navigating, wait until done
-    let navWait = 0;
-    while (isNavigating && navWait < 15000) { // 15s max wait
-      await sleep(100);
-      navWait += 100;
+    // Calculate wait time
+    let delta;
+    const state = replayState[tabId];
+    if (state && state.customDelay !== null) {
+      delta = state.customDelay;
+      if (i === 0) delta = Math.max(delta, 2000); // minimum warmup
+    } else {
+      delta = Math.max(0, event.timestamp - prevTime);
+      if (i === 0) delta = 5000; // warmup: Wait 5s for SPA loading
     }
-    // Extra pause after navigation to ensure data fetch
-    if (navWait > 0) {
-      await sleep(3000);
+
+    // We wait BEFORE executing the current event
+    const loopStartTime = Date.now();
+    let waited = 0;
+    const chunkMs = 100;
+    let didInitialHighlight = false;
+
+    // Send initial countdown
+    chrome.tabs.sendMessage(tabId, {
+      action: "replayWidgetCountdown",
+      index: i,
+      duration: delta
+    });
+
+    if (replayState[tabId]) replayState[tabId].skipWait = false;
+
+    while (waited < delta) {
+      if (replayState[tabId] && replayState[tabId].isCancelled) break;
+
+      // Detect if a navigation just started (either before the loop started, or inside this wait chunk)
+      if ((isNavigating || lastNavTime > loopStartTime - 1000) && handledNavTime !== lastNavTime) {
+        handledNavTime = lastNavTime;
+
+        // 1. Wait for navigation to finish (up to 15s)
+        let navWait = 0;
+        while (isNavigating && navWait < 15000) {
+          if (replayState[tabId] && replayState[tabId].isCancelled) break;
+          // Notice we DO NOT break on skipWait during the loading phase itself, we MUST wait for the page!
+          await sleep(100);
+          navWait += 100;
+        }
+
+        // Prevent stale state if loadEventFired never arrived
+        isNavigating = false;
+        if (replayState[tabId] && replayState[tabId].isCancelled) break;
+
+        // 2. Post-load stability buffering (up to 3s), allows skipping!
+        let postNavWaited = 0;
+        while (postNavWaited < 3000) {
+          if (replayState[tabId] && replayState[tabId].isCancelled) break;
+          if (replayState[tabId] && replayState[tabId].skipWait) break;
+          await sleep(100);
+          postNavWaited += 100;
+        }
+
+        if (replayState[tabId] && replayState[tabId].isCancelled) break;
+
+        // 3. Re-inject widget into the new page
+        try {
+          await injectReplayWidget(tabId, replayable);
+          for (let j = 0; j < i; j++) {
+            await updateReplayWidgetEvent(tabId, j, 'done', replayable.length);
+          }
+          chrome.tabs.sendMessage(tabId, { action: "replayWidgetStarted" });
+        } catch (e) { console.warn("Re-inject widget failed", e); }
+
+        if (replayState[tabId] && replayState[tabId].skipWait) {
+          replayState[tabId].skipWait = false;
+          break; // User skipped wait during injection phase, execute immediately
+        }
+
+        // 4. NOW that page is loaded and widget injected, restart our wait logic and visual countdown
+        waited = 0;
+        didInitialHighlight = false;
+        chrome.tabs.sendMessage(tabId, {
+          action: "replayWidgetCountdown",
+          index: i,
+          duration: delta
+        });
+      }
+
+      if (replayState[tabId] && replayState[tabId].skipWait) {
+        replayState[tabId].skipWait = false;
+        break;
+      }
+      while (replayState[tabId] && replayState[tabId].isPaused) {
+        if (replayState[tabId].isCancelled) break;
+        await sleep(200);
+      }
+
+      // We break the wait into chunks
+      const toWait = Math.min(chunkMs, delta - waited);
+      await sleep(toWait);
+      waited += toWait;
+
+      // Show highlight during the last 800ms
+      if (!didInitialHighlight && waited >= delta - 800) {
+        didInitialHighlight = true;
+        highlightReplayTarget(tabId, event, i);
+      }
     }
+
+    if (replayState[tabId] && replayState[tabId].isCancelled) break;
+
+    // Wait loop complete. Mark event as active and execute
+    await updateReplayWidgetEvent(tabId, i, 'active', replayable.length);
 
     // Execute
     try {
+      let result;
       if (event.type === 'click') {
-        await executeClick(tabId, event);
+        result = await executeClick(tabId, event);
       } else if (event.type === 'input') {
-        await executeInput(tabId, event);
+        result = await executeInput(tabId, event);
       }
+      if (result) {
+        if (!result.found) {
+          throw new Error('Element not found on page');
+        } else if (result.error) {
+          throw new Error('Element found but interaction failed: ' + result.error);
+        }
+      }
+      // Clear highlight and mark as done
+      clearReplayHighlight(tabId);
+      await updateReplayWidgetEvent(tabId, i, 'done', replayable.length);
+      completedCount = i + 1;
     } catch (e) {
       console.warn("Event execution failed", e);
+      clearReplayHighlight(tabId);
+      errorCount++;
+      completedCount = i + 1;
+      await updateReplayWidgetEvent(tabId, i, 'error', replayable.length);
+
+      // Show skip option in the footer
+      chrome.tabs.sendMessage(tabId, {
+        action: "replayWidgetShowSkipOption",
+        index: i,
+        total: replayable.length
+      });
+
+      // Wait for user to skip or retry (or cancel)
+      if (replayState[tabId]) {
+        replayState[tabId].skipFailed = false;
+        replayState[tabId].isPaused = true; // Pause replay
+      }
+      while (replayState[tabId] && replayState[tabId].isPaused) {
+        if (replayState[tabId].isCancelled) break;
+        if (replayState[tabId].skipFailed) {
+          replayState[tabId].skipFailed = false;
+          replayState[tabId].isPaused = false;
+          break;
+        }
+        await sleep(200);
+      }
+      // If retry resolved the error (status became 'done'), errorCount was already adjusted by replayRetryEvent
+      // Continue to next event
     }
+
+    // Reset navigation flag before next event to avoid stale state
+    isNavigating = false;
   }
 
-  // Cleanup
+  // Cleanup navigation handler
   chrome.debugger.onEvent.removeListener(navHandler);
-  showReplayFinished(tabId, replayable.length);
-}
+  clearReplayHighlight(tabId);
 
-function showReplayFinished(tabId, count) {
-  chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
-    expression: `
-            (function() {
-                var b = document.getElementById('replay-badge');
-                if (b) {
-                    b.innerText = 'Replay Successfully Finished (${count} events)';
-                    b.style.background = '#107c10';
-                    setTimeout(function() { b.remove(); }, 4000);
-                }
-            })();
-        `
-  });
+  // Check if cancelled
+  const wasCancelled = replayState[tabId] && replayState[tabId].isCancelled;
+
+  if (wasCancelled) {
+    // Show cancelled state
+    chrome.tabs.sendMessage(tabId, {
+      action: "replayWidgetCancelled",
+      completed: completedCount,
+      total: replayable.length
+    });
+  } else {
+    // Show finished state in widget (keep widget open)
+    await showReplayWidgetFinished(tabId, replayable.length, errorCount);
+  }
+
+  if (replayState[tabId]) {
+    replayState[tabId].isFinished = true;
+  }
+
+  // Re-show the recording widget
   chrome.tabs.sendMessage(tabId, { action: "setWidgetVisibility", visible: true });
-  setTimeout(() => { chrome.debugger.detach({ tabId: tabId }); }, 5000);
+
+  // Don't auto-detach debugger - keep it alive for potential retries
+  // It will be detached when the widget is closed
 }
 
-async function setupReplayEnvironment(tabId, context) {
+async function replayRetryEvent(tabId, event, index) {
+  const state = replayState[tabId];
+  if (!state) return;
+
+  // Mark as active and highlight
+  await updateReplayWidgetEvent(tabId, index, 'active', state.events.length);
+  highlightReplayTarget(tabId, event, index);
+  await sleep(800);
+
+  try {
+    let result;
+    if (event.type === 'click') {
+      result = await executeClick(tabId, event);
+    } else if (event.type === 'input') {
+      result = await executeInput(tabId, event);
+    }
+    if (result && !result.found) {
+      throw new Error('Element not found on page');
+    }
+    clearReplayHighlight(tabId);
+    await updateReplayWidgetEvent(tabId, index, 'done', state.events.length);
+
+    // If the replay loop is still waiting for skip/retry on this event, resume it
+    if (!state.isFinished && state.isPaused) {
+      state.skipFailed = true; // Will resume the loop
+    }
+
+    // Recalculate error count
+    try {
+      await sendCommand(tabId, "Runtime.evaluate", {
+        expression: `
+          (function() {
+            var errors = document.querySelectorAll('.sr-event-row.error');
+            var footer = document.getElementById('sr-footer');
+            if (errors.length === 0 && footer) {
+              footer.textContent = 'All events replayed successfully!';
+              footer.className = 'sr-footer success';
+              var pf = document.getElementById('sr-progress-fill');
+              if (pf) pf.style.background = 'linear-gradient(90deg, #2ea043, #3fb950)';
+            } else if (footer) {
+              footer.textContent = 'Replay finished with ' + errors.length + ' error(s). Use ↻ to retry.';
+              footer.className = 'sr-footer has-errors';
+            }
+          })()
+        `
+      });
+    } catch (e) { }
+  } catch (e) {
+    console.warn("Retry failed", e);
+    clearReplayHighlight(tabId);
+    await updateReplayWidgetEvent(tabId, index, 'error', state.events.length);
+  }
+}
+
+async function setupReplayEnvironment(tabId, context, url) {
   if (!context) return;
 
   // Enable domains
@@ -978,13 +1446,33 @@ async function setupReplayEnvironment(tabId, context) {
   } catch (e) { }
 
   // 1. Clear Storage if requested
-  if (context.clearStorage) {
-    try {
+  try {
+    const origin = url ? new URL(url).origin : null;
+    let typesToClear = [];
+    if (context.clearLocalSession) typesToClear.push("local_storage");
+    if (context.clearCookies) typesToClear.push("cookies");
+    if (context.clearIndexedDB) typesToClear.push("indexeddb", "websql");
+
+    if (origin && typesToClear.length > 0) {
+      // Use Storage.clearDataForOrigin for origin-specific clearing
+      await sendCommand(tabId, "Storage.enable");
+      await sendCommand(tabId, "Storage.clearDataForOrigin", {
+        origin: origin,
+        storageTypes: typesToClear.join(",")
+      });
+    }
+
+    // Fallback/additional clearing via JS and Network API
+    if (context.clearCookies) {
       await sendCommand(tabId, "Network.clearBrowserCookies");
+    }
+    if (context.clearLocalSession) {
       await sendCommand(tabId, "Runtime.evaluate", {
         expression: "localStorage.clear(); sessionStorage.clear();"
       });
-    } catch (e) { console.warn("Clear storage failed", e); }
+    }
+  } catch (e) {
+    console.warn("Clear storage failed", e);
   }
 
   // 2. Set Cookies
@@ -1081,56 +1569,213 @@ function sendCommand(tabId, method, params, retry = true) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 async function executeClick(tabId, event) {
-  const xpath = event.target ? event.target.xpath : null;
-  let x = event.x, y = event.y;
   let found = false;
+  let method = 'none';
+  const target = event.target || {};
+  const selectorPath = target.selectorPath || [];
 
-  try {
-    const res = await sendCommand(tabId, "Runtime.evaluate", {
-      expression: `(function(){ 
-                 var xpath = "${xpath ? xpath.replace(/"/g, '\\"') : ''}";
-                 var el = xpath ? document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue : null;
-                 if (el) {
-                    el.scrollIntoView({block: 'center', inline: 'center'});
-                    var original = el.style.outline;
-                    el.style.outline = '3px solid #ff0000';
-                    setTimeout(function() { el.style.outline = original; }, 300);
-                    
-                    el.click(); 
-                    return { found: true };
-                 }
-                 return { found: false };
-            })()`,
-      returnByValue: true
-    });
-    if (res && res.result && res.result.value && res.result.value.found) {
-      found = true;
-    }
-  } catch (e) { }
+  // Build ordered list of strategies from the selector path
+  // Priority: interactiveParent > deepTarget > legacy xpath > coordinates
+  const strategies = [];
 
-  if (!found && x !== undefined && y !== undefined) {
-    await sendCommand(tabId, "Input.dispatchMouseEvent", { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
-    await sleep(50);
-    await sendCommand(tabId, "Input.dispatchMouseEvent", { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+  // 1. Interactive parent (the element where the click handler likely lives)
+  const interactiveLayer = selectorPath.find(l => l.role_in_path === 'interactiveParent');
+  if (interactiveLayer) {
+    if (interactiveLayer.selector) strategies.push({ type: 'css', value: interactiveLayer.selector, label: 'interactiveParent.css' });
+    if (interactiveLayer.xpath) strategies.push({ type: 'xpath', value: interactiveLayer.xpath, label: 'interactiveParent.xpath' });
   }
+
+  // 2. Deep Target (the actual clicked element)
+  const deepLayer = selectorPath.find(l => l.role_in_path === 'deepTarget');
+  if (deepLayer) {
+    if (deepLayer.selector) strategies.push({ type: 'css', value: deepLayer.selector, label: 'deepTarget.css' });
+    if (deepLayer.xpath) strategies.push({ type: 'xpath', value: deepLayer.xpath, label: 'deepTarget.xpath' });
+  }
+
+  // 3. Legacy top-level selectors (first unique selector generated by getCssSelector)
+  if (target.selectors && target.selectors.length > 0) {
+    strategies.push({ type: 'css', value: target.selectors[0], label: 'legacy.css' });
+  }
+
+  // 4. Legacy xpath (top-level target xpath)
+  if (target.xpath) {
+    strategies.push({ type: 'xpath', value: target.xpath, label: 'legacy.xpath' });
+  }
+
+  // Deduplicate strategies
+  const seen = new Set();
+  const uniqueStrategies = strategies.filter(s => {
+    const key = s.type + ':' + s.value;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  // Try each strategy with polling (up to 3s each)
+  for (const strategy of uniqueStrategies) {
+    if (found) break;
+
+    let attempts = 0;
+    const maxAttempts = 15; // 15 * 200ms = 3s
+
+    while (attempts < maxAttempts) {
+      try {
+        let expression;
+        if (strategy.type === 'css') {
+          const safeSel = strategy.value.replace(/\\/g, '\\\\\\\\').replace(/"/g, '\\\\"');
+          expression = `(function(){
+            var el = document.querySelector("${safeSel}");
+            if (el) {
+              try {
+                el.scrollIntoView({block: 'center', inline: 'center'});
+                el.click();
+                return { found: true, method: "${strategy.label}" };
+              } catch (e) {
+                return { found: true, error: e.message || String(e), method: "${strategy.label}" };
+              }
+            }
+            return { found: false };
+          })()`;
+        } else {
+          const safeXpath = strategy.value.replace(/"/g, '\\\\"');
+          expression = `(function(){
+            var el = document.evaluate("${safeXpath}", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+            if (el) {
+              try {
+                el.scrollIntoView({block: 'center', inline: 'center'});
+                el.click();
+                return { found: true, method: "${strategy.label}" };
+              } catch (e) {
+                return { found: true, error: e.message || String(e), method: "${strategy.label}" };
+              }
+            }
+            return { found: false };
+          })()`;
+        }
+
+        const res = await sendCommand(tabId, "Runtime.evaluate", {
+          expression: expression,
+          returnByValue: true
+        });
+
+        if (res && res.result && res.result.value && res.result.value.found) {
+          if (res.result.value.error) {
+            return { found: true, method: res.result.value.method, error: res.result.value.error };
+          }
+          found = true;
+          method = res.result.value.method || strategy.label;
+          break;
+        }
+      } catch (e) { }
+
+      attempts++;
+      // Only poll on the first strategy (interactive parent), skip quickly for fallbacks
+      if (attempts < maxAttempts && strategies.indexOf(strategy) === 0) {
+        await sleep(200);
+      } else {
+        break; // Don't poll for fallback strategies
+      }
+    }
+  }
+
+  // Last resort: coordinate click (only if nothing else worked and no selectorPath)
+  if (!found && uniqueStrategies.length === 0 && event.x !== undefined && event.y !== undefined) {
+    try {
+      await sendCommand(tabId, "Input.dispatchMouseEvent", { type: 'mousePressed', x: event.x, y: event.y, button: 'left', clickCount: 1 });
+      await sleep(50);
+      await sendCommand(tabId, "Input.dispatchMouseEvent", { type: 'mouseReleased', x: event.x, y: event.y, button: 'left', clickCount: 1 });
+      found = true;
+      method = 'coordinates';
+    } catch (e) { }
+  }
+
+  return { found, method };
 }
 
 async function executeInput(tabId, event) {
-  if (!event.target.xpath) return;
-  const safeValue = (event.value || '').replace(/"/g, '\\"').replace(/\n/g, '\\n');
-  const xpath = event.target.xpath.replace(/"/g, '\\"');
-  await sendCommand(tabId, "Runtime.evaluate", {
-    expression: `
-            (function() {
-                var el = document.evaluate("${xpath}", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-                if (el) { 
-                    el.scrollIntoView({block: 'center', inline: 'center'});
-                    el.focus(); 
-                    el.value = "${safeValue}"; 
-                    el.dispatchEvent(new Event('input', { bubbles: true })); 
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-            })();
-        `
+  const target = event.target || {};
+  const selectorPath = target.selectorPath || [];
+  const safeValue = (event.value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+
+  // Build find expression for a given element
+  function buildInputExpression(findExpr) {
+    return `(function(){
+      var el = ${findExpr};
+      if (el) {
+        try {
+          el.scrollIntoView({block: 'center', inline: 'center'});
+          el.focus();
+          el.value = "${safeValue}";
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return { found: true };
+        } catch (e) {
+          return { found: true, error: e.message || String(e) };
+        }
+      }
+      return { found: false };
+    })()`;
+  }
+
+  // Build strategies: for input, deepTarget is most important (it's the actual input field)
+  const strategies = [];
+
+  const deepLayer = selectorPath.find(l => l.role_in_path === 'deepTarget');
+  if (deepLayer) {
+    if (deepLayer.selector) strategies.push({ type: 'css', value: deepLayer.selector });
+    if (deepLayer.xpath) strategies.push({ type: 'xpath', value: deepLayer.xpath });
+  }
+
+  // Legacy selectors
+  if (target.selectors && target.selectors.length > 0) {
+    strategies.push({ type: 'css', value: target.selectors[0] });
+  }
+  if (target.xpath) {
+    strategies.push({ type: 'xpath', value: target.xpath });
+  }
+
+  // Deduplicate
+  const seen = new Set();
+  const uniqueStrategies = strategies.filter(s => {
+    const key = s.type + ':' + s.value;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
+
+  for (const strategy of uniqueStrategies) {
+    let attempts = 0;
+    const maxAttempts = 15;
+
+    while (attempts < maxAttempts) {
+      try {
+        let findExpr;
+        if (strategy.type === 'css') {
+          const safeSel = strategy.value.replace(/\\/g, '\\\\\\\\').replace(/"/g, '\\\\"');
+          findExpr = `document.querySelector("${safeSel}")`;
+        } else {
+          const safeXpath = strategy.value.replace(/"/g, '\\\\"');
+          findExpr = `document.evaluate("${safeXpath}", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue`;
+        }
+
+        const res = await sendCommand(tabId, "Runtime.evaluate", {
+          expression: buildInputExpression(findExpr),
+          returnByValue: true
+        });
+
+        if (res && res.result && res.result.value && res.result.value.found) {
+          return res.result.value; // Returns { found: true, error?: "..." }
+        }
+      } catch (e) { }
+
+      attempts++;
+      if (attempts < maxAttempts && uniqueStrategies.indexOf(strategy) === 0) {
+        await sleep(200);
+      } else {
+        break;
+      }
+    }
+  }
+
+  return { found: false };
 }

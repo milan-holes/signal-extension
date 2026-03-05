@@ -179,6 +179,18 @@
       }
     }
 
+    @keyframes video-highlight-pulse {
+      0% {
+        transform: scale(1.08);
+        box-shadow: 0 0 0 4px rgba(136, 98, 237, 0.4), 0 0 20px rgba(136, 98, 237, 0.3);
+      }
+
+      100% {
+        transform: scale(1);
+        box-shadow: none;
+      }
+    }
+
     /* Main Content */
     .main-wrapper {
       flex: 1;
@@ -252,6 +264,46 @@
     .action-btn.primary:hover {
       background: var(--primary-hover);
     }
+
+    .dropdown-item {
+      transition: background 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .dropdown-item:hover {
+      background: var(--bg-hover);
+      color: var(--text-main);
+      box-shadow: inset 2px 0 0 var(--primary);
+    }
+
+    .dropdown-item:active {
+      opacity: 0.75;
+    }
+
+    /* Fullscreen player */
+    #screenPlayerWrapper:fullscreen,
+    #screenPlayerWrapper:-webkit-full-screen,
+    #screenPlayerWrapper:-moz-full-screen {
+      background: #000 !important;
+      display: flex !important;
+      flex-direction: column !important;
+      align-items: center !important;
+      justify-content: center !important;
+      margin: 0 !important;
+      max-height: none !important;
+      width: 100% !important;
+      height: 100% !important;
+    }
+
+    #screenPlayerWrapper:fullscreen #screenPlayer,
+    #screenPlayerWrapper:-webkit-full-screen #screenPlayer,
+    #screenPlayerWrapper:-moz-full-screen #screenPlayer {
+      max-width: 100% !important;
+      max-height: 100% !important;
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: contain !important;
+    }
+
 
     /* Timeline Details */
     .timeline-tabs {
@@ -585,6 +637,26 @@
       background: var(--primary);
     }
 
+    .video-resize-handle {
+      height: 6px;
+      width: 100%;
+      cursor: row-resize;
+      background: transparent;
+      transition: background 0.15s;
+      flex-shrink: 0;
+      z-index: 10;
+      margin-top: -3px;
+      /* Pull it up to overlap the border */
+      margin-bottom: -3px;
+      /* Pull the next element up */
+      position: relative;
+    }
+
+    .video-resize-handle:hover,
+    .video-resize-handle.active {
+      background: var(--primary);
+    }
+
     .details-header-bar {
       height: 50px;
       padding: 0 15px;
@@ -826,7 +898,7 @@
             <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"></path>
             <path d="M13 13l6 6"></path>
           </svg>
-          Recording
+          Timeline
         </div>
         <div class="nav-item tab-btn" data-target="environment">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -920,24 +992,71 @@
               <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
             </svg>
           </button>
-          <button id="shareBtn" class="action-btn" title="Share via Webhook">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="18" cy="5" r="3"></circle>
-              <circle cx="6" cy="12" r="3"></circle>
-              <circle cx="18" cy="19" r="3"></circle>
-              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-            </svg>
-            Share
-          </button>
-          <button id="downloadBtn" class="action-btn">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="7 10 12 15 17 10"></polyline>
-              <line x1="12" y1="15" x2="12" y2="3"></line>
-            </svg>
-            Export
-          </button>
+
+          <div style="position:relative; display:inline-block;">
+            <button id="shareBtn" class="action-btn" title="Share Options"
+              style="display:flex; align-items:center; gap:6px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="18" cy="5" r="3"></circle>
+                <circle cx="6" cy="12" r="3"></circle>
+                <circle cx="18" cy="19" r="3"></circle>
+                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+              </svg>
+              Share
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
+
+            <div id="shareDropdown" class="dropdown-menu"
+              style="display:none; position:absolute; top:100%; right:0; margin-top:5px; background:var(--bg-card); border:1px solid var(--border-color); border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.2); z-index:100; min-width:200px; overflow:hidden;">
+              <div id="opt-export" class="dropdown-item"
+                style="padding:10px 15px; cursor:pointer; font-size:13px; color:var(--text-main); display:flex; align-items:center; gap:8px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Export Recording
+              </div>
+              <div id="opt-webhook" class="dropdown-item"
+                style="padding:10px 15px; cursor:pointer; font-size:13px; color:var(--text-main); display:flex; align-items:center; gap:8px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                </svg>
+                Share via Webhook
+              </div>
+              <div style="height:1px; background:var(--border-color); margin:4px 0;"></div>
+              <div id="opt-llm-context" class="dropdown-item"
+                style="padding:10px 15px; cursor:pointer; font-size:13px; color:var(--text-main); display:flex; align-items:center; gap:8px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path
+                    d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z">
+                  </path>
+                </svg>
+                Context for LLM Agent
+              </div>
+              <div style="height:1px; background:var(--border-color); margin:4px 0;"></div>
+              <div id="opt-playwright" class="dropdown-item"
+                style="padding:10px 15px; cursor:pointer; font-size:13px; color:var(--text-main); display:flex; align-items:center; gap:8px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+                Gen. Playwright Script
+              </div>
+              <div id="opt-puppeteer" class="dropdown-item"
+                style="padding:10px 15px; cursor:pointer; font-size:13px; color:var(--text-main); display:flex; align-items:center; gap:8px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
+                  <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path>
+                  <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line>
+                </svg>
+                Gen. Puppeteer Script
+              </div>
+            </div>
+          </div>
           <button id="replayBtn" class="action-btn primary" style="padding: 8px 20px; font-size: 14px;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polygon points="5 3 19 12 5 21 5 3"></polygon>
@@ -1062,6 +1181,19 @@
                       <path d="M7 15l5 5 5-5M7 9l5-5 5 5" />
                     </svg>
                   </th>
+                  <th style="width:80px; cursor:pointer; white-space:nowrap;" class="sortable" data-key="duration">
+                    DURATION
+                    <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"
+                      style="margin-left:5px; opacity:0.5;">
+                      <path d="M7 15l5 5 5-5M7 9l5-5 5 5" />
+                    </svg>
+                  </th>
+                  <th style="width:70px; cursor:pointer; white-space:nowrap;" class="sortable" data-key="size">SIZE
+                    <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"
+                      style="margin-left:5px; opacity:0.5;">
+                      <path d="M7 15l5 5 5-5M7 9l5-5 5 5" />
+                    </svg>
+                  </th>
                   <th style="cursor:pointer; white-space:nowrap;" class="sortable" data-key="name">NAME / URL <svg
                       viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"
                       style="margin-left:5px; opacity:0.5;">
@@ -1077,9 +1209,11 @@
 
         <!-- Timeline -->
         <div id="timeline" class="tab-content active" style="flex-direction:column; overflow:hidden;">
-          <div
-            style="flex:0 0 auto; border-bottom:1px solid var(--border-color); background:var(--bg-card); padding:10px; z-index:10;">
-            <div style="display:flex; align-items:center; gap:15px; max-width:900px; margin:0 auto;">
+          <div id="timelineVideoSection"
+            style="flex:0 0 auto; height:360px; border-bottom:1px solid var(--border-color); background:var(--bg-card); padding:10px; z-index:5; position:relative; display:flex; flex-direction:column;">
+            <!-- Normal-mode controls (hidden in fullscreen via CSS) -->
+            <div id="playerControlsBar"
+              style="display:flex; align-items:center; gap:15px; max-width:900px; margin:0 auto;">
               <button id="playBtn" class="action-btn primary"
                 style="width:80px; display:flex; align-items:center; justify-content:center; gap:6px;">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
@@ -1088,13 +1222,65 @@
               </button>
               <span id="timeDisplay" style="font-family:monospace;">00:00</span>
               <input type="range" id="scrubber" min="0" max="100" value="0" style="flex:1;">
+              <button id="fullscreenBtn" class="action-btn" title="Fullscreen"
+                style="padding:6px 8px; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+                <svg id="fullscreenIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2">
+                  <path
+                    d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+                </svg>
+              </button>
             </div>
-            <div
-              style="text-align:center; background:#000; margin-top:10px; min-height:0; max-height:300px; overflow:hidden; display:flex; align-items:center; justify-content:center;">
-              <img id="screenPlayer" style="max-width:100%; max-height:300px; display:block;">
+
+            <!-- Player wrapper — this is the fullscreen root -->
+            <div id="screenPlayerWrapper"
+              style="text-align:center; background:#000; margin-top:10px; min-height:100px; flex:1; overflow:hidden; display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative;">
+
+              <style>
+                #screenPlayerWrapper:fullscreen {
+                  max-height: 100% !important;
+                }
+
+                #screenPlayerWrapper:fullscreen #screenPlayer {
+                  max-height: 100vh !important;
+                  max-width: 100vw !important;
+                  object-fit: contain !important;
+                }
+              </style>
+
+              <img id="screenPlayer"
+                style="max-width:100%; max-height:100%; height:100%; flex:1; min-height:0; object-fit:contain; display:block;">
+
+              <!-- Fullscreen-only overlay controls -->
+              <div id="fsControls" style="
+                display:none;
+                position:absolute; bottom:0; left:0; right:0;
+                background:linear-gradient(transparent, rgba(0,0,0,0.85));
+                padding:20px 16px 12px;
+                gap:12px; align-items:center;
+              ">
+                <button id="fsPlayBtn" class="action-btn primary"
+                  style="width:80px; display:flex; align-items:center; justify-content:center; gap:6px; font-size:12px;">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <polygon points="5 3 19 12 5 21 5 3" />
+                  </svg> Play
+                </button>
+                <span id="fsTimeDisplay"
+                  style="font-family:monospace; color:white; font-size:12px; white-space:nowrap;">00:00</span>
+                <input type="range" id="fsScrubber" min="0" max="100" value="0" style="flex:1;">
+                <button id="fsExitBtn" class="action-btn" title="Exit Fullscreen"
+                  style="padding:5px 8px; display:flex; align-items:center; gap:5px; font-size:12px; flex-shrink:0;">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path
+                      d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
+                  </svg>
+                  Exit
+                </button>
+              </div>
             </div>
           </div>
-          <div style="display:flex; flex:1; overflow:hidden;">
+          <div class="video-resize-handle" id="videoResizer"></div>
+          <div style="display:flex; flex:1; overflow:hidden; z-index:1;">
             <div style="flex:0 0 450px; border-right:1px solid var(--border-color); overflow-y:auto;">
               <table id="timelineTable">
                 <thead>
@@ -1121,6 +1307,7 @@
                 style="display:flex; border-bottom:1px solid var(--border-color); background:var(--bg-app);">
                 <div class="timeline-tab active" data-tab="console">Console</div>
                 <div class="timeline-tab" data-tab="network">Network</div>
+                <div class="timeline-tab" data-tab="details">Details</div>
               </div>
 
               <!-- Detail Content -->
@@ -1186,6 +1373,15 @@
                       </thead>
                       <tbody></tbody>
                     </table>
+                  </div>
+                </div>
+
+                <!-- Details Panel -->
+                <div id="timeline-details" class="timeline-panel"
+                  style="flex-direction:column; padding:15px; overflow-y:auto; font-size:13px;">
+                  <div id="timelineDetailsContent" style="color:var(--text-main);">
+                    <div style="text-align:center; padding:20px; color:var(--text-secondary);">Select a User Event to
+                      view details.</div>
                   </div>
                 </div>
 
@@ -1278,6 +1474,35 @@
 
     <!-- Hidden Elements to keep JS from crashing if it looks for them -->
     <div id="detailModal" style="display:none;"></div>
+
+    <!-- SCRIPT / LLM MODAL -->
+    <div id="scriptModal" class="modal-overlay" style="display:none;">
+      <div class="modal-content" style="width:800px; max-width:90%; height:80vh;">
+        <div class="modal-header">
+          <div class="modal-title" id="scriptModalTitle">Generated Script</div>
+          <svg class="close-icon" id="closeScriptBtn" width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" style="cursor:pointer;">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </div>
+        <div class="modal-body" style="display:flex; flex-direction:column; gap:15px; padding:20px;">
+          <textarea id="scriptModalTextarea" class="code-editor"
+            style="flex:1; resize:none; font-family:monospace; padding:15px; white-space:pre-wrap;"></textarea>
+          <div style="display:flex; justify-content:flex-end; gap:10px;">
+            <button id="scriptModalCloseBtn" class="action-btn">Close</button>
+            <button id="scriptModalCopyBtn" class="action-btn primary" style="display:flex; align-items:center;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                style="margin-right:6px;">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+              Copy to Clipboard
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- REQUEST COMPOSER MODAL -->
     <div id="requestComposer" class="modal-overlay" style="display:none;">
@@ -1446,7 +1671,7 @@
 
     <!-- REPLAY CONFIGURATION MODAL -->
     <div id="replayConfigModal" class="modal-overlay" style="display:none;">
-      <div class="modal-content" style="width:800px; height:700px;">
+      <div class="modal-content" style="width:800px; max-width:95%; max-height:85vh;">
         <div class="modal-header">
           <div class="modal-title">Replay Configuration</div>
           <svg class="close-icon" id="closeReplayConfigBtn" width="20" height="20" viewBox="0 0 24 24" fill="none"
@@ -1471,10 +1696,36 @@
             <input type="text" id="replayUrlInput" class="form-input"
               style="width:100%; margin-bottom:15px; flex:none; height:36px;" placeholder="https://example.com/app">
 
+            <div class="field-label" style="margin-bottom:10px;">Clear Data (Before injection, for starting domain)
+            </div>
+            <div
+              style="display:flex; flex-wrap:wrap; gap:15px; margin-bottom:15px; color:var(--text-main); font-size:13px;">
+              <label style="display:flex; align-items:center; gap:6px;">
+                <input type="checkbox" id="clearLocalSession" checked> Local/Session Storage
+              </label>
+              <label style="display:flex; align-items:center; gap:6px;">
+                <input type="checkbox" id="clearCookies" checked> Cookies
+              </label>
+              <label style="display:flex; align-items:center; gap:6px;">
+                <input type="checkbox" id="clearIndexedDB" checked> IndexedDB
+              </label>
+            </div>
+
             <div class="field-label" style="margin-bottom:10px;">Options</div>
             <label
               style="display:flex; align-items:center; gap:8px; margin-bottom:10px; color:var(--text-main); font-size:13px;">
-              <input type="checkbox" id="replayClearStorageCheck" checked> Clear existing storage before injection
+              <input type="checkbox" id="replayAutoStartCheck"> Start replay automatically
+            </label>
+            <label
+              style="display:flex; align-items:center; gap:8px; margin-bottom:15px; color:var(--text-main); font-size:13px;">
+              Delay between events:
+              <select id="replayDefaultDelay" class="form-select" style="padding:4px 8px; font-size:12px;">
+                <option value="auto">Auto (Original Timing)</option>
+                <option value="500">0.5 Seconds</option>
+                <option value="1000">1 Second</option>
+                <option value="2000" selected>2 Seconds</option>
+                <option value="5000">5 Seconds</option>
+              </select>
             </label>
             <div style="font-size:13px; color:var(--text-secondary); line-height:1.5;">
               Configure the environment before replaying events. You can inject specific authentication tokens into
@@ -1537,12 +1788,24 @@
             </button>
           </div>
 
-          <div style="margin-top:20px; text-align:right;">
-            <button id="startReplayBtn" class="action-btn primary" style="padding:10px 20px;">Start Replay With
-              Context</button>
-          </div>
+        </div>
+        <div
+          style="padding:12px 20px; border-top:1px solid var(--border-color); text-align:right; flex-shrink:0; background:var(--bg-card); border-radius:0 0 8px 8px;">
+          <button id="startReplayBtn" class="action-btn primary" style="padding:10px 20px;">Start Replay With
+            Context</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div id="exportModalLoader" class="modal-overlay"
+    style="display:none; z-index:10000; align-items:center; justify-content:center; flex-direction:column; background:rgba(0,0,0,0.7); position:fixed; top:0; left:0; width:100vw; height:100vh;">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2"
+      style="animation: spin 1s linear infinite; margin-bottom:15px;">
+      <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+    </svg>
+    <div style="font-size:16px; font-weight:600; color:white;">Exporting Report...</div>
+    <div style="font-size:13px; color:rgba(255,255,255,0.7); margin-top:5px;">Please wait while we compress the data
     </div>
   </div>
 

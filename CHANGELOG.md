@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4] - 2026-03-01
+
+### Added
+- **Replay Element Inspector**: Added a new inspect (`🔍`) button to each event in the replay widget. It highlights the target element in the live viewport and logs the DOM node directly to the console for deep inspection.
+- **Granular Storage Clearing**: Replay Configuration now allows selecting specific storage types (Local/Session Storage, Cookies, IndexedDB) to securely wipe from the starting domain before a replay begins.
+- **Network Request Copying**: Added convenient "Copy as Fetch" and "Copy as cURL" buttons to the network request details panel for easy API debugging.
+- **Fullscreen Video Controls**: Added native-like controls (Play/Pause, scrub bar, time display) overlayed when viewing the timeline screencast in full-screen mode.
+
+### Improved
+- **Robust Automation Scripts**:
+  - Playwright: Now initializes with `browser.newContext()` to simulate viewport and locale, and uses modern `page.locator()` syntax instead of older click methods.
+  - Puppeteer: Generated scripts now utilize intelligent `clickXPath` and `fillXPath` helper functions to avoid scope redeclaration errors.
+- **Fullscreen Video Scaling**: Forced CSS `!important` bounds to ensure the playback video properly expands to fit the maximum screen size in fullscreen mode without being constrained by inline styles.
+- **Replay State Syncing**: Fixed an issue where inspecting the Replay Widget after removing an event would incorrectly target the previous element at that index.
+
 ## [1.3] - 2026-02-15
 
 ### Added

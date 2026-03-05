@@ -1,3 +1,46 @@
+// ---- Toast Utility ----
+function showToast(message, type = 'info') {
+  const existing = document.getElementById('signal-toast');
+  if (existing) existing.remove();
+
+  const colors = { info: '#2e89ff', success: '#31a24c', error: '#fa383e', warning: '#f0ad4e' };
+  const icons = {
+    info: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
+    success: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>`,
+    error: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
+    warning: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+  };
+
+  const color = colors[type] || colors.info;
+  const icon = icons[type] || icons.info;
+
+  const toast = document.createElement('div');
+  toast.id = 'signal-toast';
+  toast.style.cssText = `
+    position: fixed; top: 24px; left: 50%; transform: translateX(-50%); z-index: 99999;
+    background: var(--bg-card, #242526); color: var(--text-main, #e4e6eb);
+    border: 1px solid var(--border-color, #3e4042);
+    border-top: 3px solid ${color};
+    padding: 12px 18px; border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    font-size: 13px; font-family: var(--font-family, sans-serif);
+    display: flex; align-items: center; gap: 10px;
+    white-space: nowrap;
+    animation: toast-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  `;
+  toast.innerHTML = `<span style="color:${color};">${icon}</span><span>${message}</span>`;
+
+  if (!document.getElementById('toast-style')) {
+    const s = document.createElement('style');
+    s.id = 'toast-style';
+    s.textContent = `@keyframes toast-in { from { opacity:0; transform:translateX(-50%) translateY(-12px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }`;
+    document.head.appendChild(s);
+  }
+
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 3000);
+}
+
 let currentReportData = null;
 let currentConsoleSort = { key: 'time', dir: 'asc' };
 let currentNetworkSort = { key: 'start', dir: 'asc' };
@@ -5,6 +48,8 @@ let isEditorMode = false;
 let globalAllEvents = [];
 let currentScreencastIndex = 0; // Sync between timeline and player
 let pauseScreencast = null; // Global function to pause playback from outside renderScreencast
+let playScreencastFromIndex = null; // Global function to start playback from a given frame index
+let lastActiveTimelineTab = 'details'; // Persist active tab across event row selections
 
 document.addEventListener('DOMContentLoaded', () => {
   // Theme Toggle
@@ -45,7 +90,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Controls are now in HTML
   const importBtn = document.getElementById('importBtn');
-  const downloadBtn = document.getElementById('downloadBtn');
+  // downloadBtn removed, logic moved to dropdown
   const replayBtn = document.getElementById('replayBtn');
   const fileInput = document.getElementById('fileInput');
   const reportDateSpan = document.getElementById('reportDate'); // New ID
@@ -319,7 +364,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (startReplayBtn) startReplayBtn.addEventListener('click', () => {
     const url = document.getElementById('replayUrlInput').value.trim();
-    const clearStorage = document.getElementById('replayClearStorageCheck').checked;
+    const clearLocalSession = document.getElementById('clearLocalSession') ? document.getElementById('clearLocalSession').checked : false;
+    const clearCookies = document.getElementById('clearCookies') ? document.getElementById('clearCookies').checked : false;
+    const clearIndexedDB = document.getElementById('clearIndexedDB') ? document.getElementById('clearIndexedDB').checked : false;
 
     let localStorageData = {};
     let sessionStorageData = {};
@@ -378,12 +425,20 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!currentReportData || !currentReportData.userEvents) return;
     const events = [...currentReportData.userEvents].sort((a, b) => a.timestamp - b.timestamp);
 
+    const autoStart = document.getElementById('replayAutoStartCheck') ? document.getElementById('replayAutoStartCheck').checked : false;
+    const defaultDelayStr = document.getElementById('replayDefaultDelay') ? document.getElementById('replayDefaultDelay').value : 'auto';
+    const defaultDelay = defaultDelayStr === 'auto' ? null : parseInt(defaultDelayStr);
+
     chrome.runtime.sendMessage({
       action: "replayEvents",
       url: url,
       events: events,
+      autoStart: autoStart,
+      defaultDelay: defaultDelay,
       context: {
-        clearStorage: clearStorage,
+        clearLocalSession: clearLocalSession,
+        clearCookies: clearCookies,
+        clearIndexedDB: clearIndexedDB,
         localStorage: localStorageData,
         sessionStorage: sessionStorageData,
         cookies: cookiesData,
@@ -414,21 +469,47 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Download logic
-  if (downloadBtn) downloadBtn.addEventListener('click', () => {
+  // --- Share Dropdown Logic ---
+  const shareBtn = document.getElementById('shareBtn');
+  const shareDropdown = document.getElementById('shareDropdown');
+
+  function closeShareDropdown() {
+    if (shareDropdown) shareDropdown.style.display = 'none';
+  }
+
+  if (shareBtn && shareDropdown) {
+    shareBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isVisible = shareDropdown.style.display === 'block';
+      closeShareDropdown();
+      if (!isVisible) shareDropdown.style.display = 'block';
+    });
+  }
+
+  document.addEventListener('click', (e) => {
+    if (shareDropdown && shareDropdown.style.display === 'block') {
+      if (!shareDropdown.contains(e.target) && !shareBtn.contains(e.target)) {
+        closeShareDropdown();
+      }
+    }
+  });
+
+  // 1. Export Option
+  const optExport = document.getElementById('opt-export');
+  if (optExport) {
+    optExport.addEventListener('click', () => {
+      closeShareDropdown();
+      exportRecording();
+    });
+  }
+
+  function exportRecording() {
     if (!currentReportData) return;
 
-    const originalText = downloadBtn.innerHTML;
-    // Ensure keyframes exist for simple spin if not present
-    if (!document.getElementById('spin-style')) {
-      const style = document.createElement('style');
-      style.id = 'spin-style';
-      style.textContent = `@keyframes spin { 100% { transform: rotate(360deg); } }`;
-      document.head.appendChild(style);
-    }
-
-    downloadBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite; margin-right: 6px;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Exporting...`;
-    downloadBtn.disabled = true;
+    // We don't have a button to spin anymore, maybe show global toast?
+    // Show loader
+    const loader = document.getElementById('exportModalLoader');
+    if (loader) loader.style.display = 'flex';
 
     // Use setTimeout to allow UI update before heavy sync work (JSON.stringify)
     setTimeout(() => {
@@ -491,15 +572,11 @@ document.addEventListener('DOMContentLoaded', () => {
             a.click();
             document.body.removeChild(a);
             setTimeout(() => URL.revokeObjectURL(url), 100);
-
-            // Restore
-            downloadBtn.innerHTML = originalText;
-            downloadBtn.disabled = false;
+            if (loader) loader.style.display = 'none';
           }).catch(err => {
+            if (loader) loader.style.display = 'none';
             console.error("Zip generation failed:", err);
             alert("Export failed: " + err.message);
-            downloadBtn.innerHTML = originalText;
-            downloadBtn.disabled = false;
           });
         } else {
           // Fallback if JSZip missing
@@ -512,21 +589,275 @@ document.addEventListener('DOMContentLoaded', () => {
           a.click();
           document.body.removeChild(a);
           setTimeout(() => URL.revokeObjectURL(url), 100);
-
-          downloadBtn.innerHTML = originalText;
-          downloadBtn.disabled = false;
+          if (loader) loader.style.display = 'none';
         }
       } catch (e) {
+        if (loader) loader.style.display = 'none';
         console.error("Export failed:", e);
         alert("Export failed: " + e.message);
-        downloadBtn.innerHTML = originalText;
-        downloadBtn.disabled = false;
       }
     }, 50);
-  });
+  }
 
-  // --- Share via Webhook ---
-  const shareBtn = document.getElementById('shareBtn');
+  // 2. Webhook Option
+  const optWebhook = document.getElementById('opt-webhook');
+  if (optWebhook) {
+    optWebhook.addEventListener('click', () => {
+      closeShareDropdown();
+      if (!currentReportData) {
+        alert('No report loaded. Import a report first.');
+        return;
+      }
+      if (webhookModal) webhookModal.style.display = 'flex';
+      if (webhookStatus) webhookStatus.style.display = 'none';
+    });
+  }
+
+  // 3. LLM Context Option
+  const optLLM = document.getElementById('opt-llm-context');
+  if (optLLM) {
+    optLLM.addEventListener('click', () => {
+      closeShareDropdown();
+      if (!currentReportData) return;
+      generateLLMContext();
+    });
+  }
+
+  function generateLLMContext() {
+    const data = currentReportData;
+    const events = (data.userEvents || []).sort((a, b) => a.timestamp - b.timestamp);
+
+    // Derive starting URL
+    const firstNav = events.find(e => e.type === 'navigation');
+    const startUrl = firstNav ? firstNav.url
+      : (data.environment && data.environment.Page && data.environment.Page['URL']) || 'unknown';
+
+    let md = `You are a software debugging assistant. Analyze the following bug report captured from a browser session and:
+1. Identify the most likely root cause
+2. Suggest specific code fixes or investigations
+3. Write a clear bug title and description
+
+---
+
+# Bug Report
+
+**Starting URL:** ${startUrl}
+**Captured At:** ${data.metadata && data.metadata.date ? data.metadata.date : new Date().toISOString()}
+`;
+
+    // Environment (brief)
+    if (data.environment) {
+      const browser = data.environment.Browser || {};
+      const parts = [];
+      if (browser['User Agent']) parts.push('UA: ' + browser['User Agent']);
+      if (browser['Viewport']) parts.push('Viewport: ' + browser['Viewport']);
+      if (parts.length) md += '**Browser:** ' + parts.join(' | ') + '\n';
+    }
+
+    md += '\n---\n\n## User Actions (Reproduction Steps)\n\n';
+    let step = 1;
+    events.forEach(e => {
+      const time = new Date(e.timestamp).toLocaleTimeString();
+      if (e.type === 'navigation') {
+        md += step++ + '. [' + time + '] Navigated to: `' + e.url + '`\n';
+      } else if (e.type === 'click') {
+        const t = e.target || {};
+        const bestSel = (t.selectors && t.selectors[0]) || (t.id ? '#' + t.id : null) || t.tagName || 'element';
+        const label = t.innerText ? ' ("' + t.innerText.substring(0, 60) + '")' : '';
+        md += step++ + '. [' + time + '] Clicked `' + bestSel + '`' + label + '\n';
+        if (t.xpath) md += '   - XPath: `' + t.xpath + '`\n';
+      } else if (e.type === 'input') {
+        const t = e.target || {};
+        const bestSel = (t.selectors && t.selectors[0]) || (t.id ? '#' + t.id : null) || t.tagName || 'input';
+        md += step++ + '. [' + time + '] Typed into `' + bestSel + '`: `' + e.value + '`\n';
+      } else if (e.type === 'keydown') {
+        md += step++ + '. [' + time + '] Pressed key: `' + e.key + '`\n';
+      }
+    });
+    if (step === 1) md += '(No user actions recorded)\n';
+
+    // Console Errors & Warnings
+    md += '\n---\n\n## Console Errors\n\n';
+    const consoleLogs = (data.consoleErrors || []).filter(l => l.level === 'error' || l.level === 'warning');
+    if (consoleLogs.length) {
+      consoleLogs.forEach(e => {
+        const level = e.level ? e.level.toUpperCase() : 'ERROR';
+        const time = new Date(e.timestamp).toLocaleTimeString();
+        md += '### [' + level + '] at ' + time + '\n';
+        md += '**Message:** ' + (e.text || e.message || '(empty)') + '\n';
+        if (e.stackTrace && e.stackTrace.callFrames && e.stackTrace.callFrames.length > 0) {
+          md += '**Stack Trace:**\n```\n';
+          e.stackTrace.callFrames.slice(0, 5).forEach(frame => {
+            md += '  at ' + (frame.functionName || '(anonymous)') + ' (' + frame.url + ':' + frame.lineNumber + ':' + frame.columnNumber + ')\n';
+          });
+          md += '```\n';
+        } else if (e.source) {
+          md += '**Source:** ' + e.source + (e.line ? ':' + e.line : '') + (e.column ? ':' + e.column : '') + '\n';
+        }
+        md += '\n';
+      });
+    } else {
+      md += '(No console errors or warnings)\n';
+    }
+
+    // Failed Network Requests
+    md += '\n---\n\n## Failed Network Requests\n\n';
+    const networkEntries = (data.har && data.har.log && data.har.log.entries) ? data.har.log.entries : [];
+    const failedRequests = networkEntries.filter(r => r.response && (r.response.status >= 400 || r.response.status === 0));
+    if (failedRequests.length) {
+      failedRequests.forEach(r => {
+        const req = r.request || {};
+        const res = r.response || {};
+        md += '### ' + (req.method || 'GET') + ' ' + req.url + '\n';
+        md += '**Status:** ' + res.status + ' ' + (res.statusText || '') + '\n';
+        if (req.postData && req.postData.text) {
+          const body = req.postData.text.substring(0, 300);
+          md += '**Request Body:**\n```\n' + body + (req.postData.text.length > 300 ? '\n...(truncated)' : '') + '\n```\n';
+        }
+        if (res.content && res.content.text) {
+          const snippet = res.content.text.substring(0, 500);
+          md += '**Response Body:**\n```\n' + snippet + (res.content.text.length > 500 ? '\n...(truncated)' : '') + '\n```\n';
+        }
+        const ct = (res.headers || []).find(h => h.name.toLowerCase() === 'content-type');
+        if (ct) md += '**Content-Type:** ' + ct.value + '\n';
+        md += '\n';
+      });
+    } else {
+      md += '(No failed network requests)\n';
+    }
+
+    md += '\n---\n\n## Task\n\nBased on the above data, please:\n1. **Identify** the root cause of the problem\n2. **Describe** the bug with a concise title and description\n3. **Suggest** specific file/function fixes if the stack trace points to source code\n';
+
+    showScriptModal('LLM Context', md);
+  }
+
+  // 4. Playwright Script
+  const optPlaywright = document.getElementById('opt-playwright');
+  if (optPlaywright) {
+    optPlaywright.addEventListener('click', () => {
+      closeShareDropdown();
+      if (!currentReportData) return;
+      generateScript('playwright');
+    });
+  }
+
+  // 5. Puppeteer Script
+  const optPuppeteer = document.getElementById('opt-puppeteer');
+  if (optPuppeteer) {
+    optPuppeteer.addEventListener('click', () => {
+      closeShareDropdown();
+      if (!currentReportData) return;
+      generateScript('puppeteer');
+    });
+  }
+
+  function generateScript(type) {
+    const events = (currentReportData.userEvents || []).sort((a, b) => a.timestamp - b.timestamp);
+    const isPW = type === 'playwright';
+    let script = '';
+
+    if (isPW) {
+      script = `const { chromium } = require('playwright');\n\n(async () => {
+  const browser = await chromium.launch({ headless: false });
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 720 },
+    locale: 'en-US' // Can be adjusted to match the site's language, e.g., 'sk-SK'
+  });
+  const page = await context.newPage();\n\n`;
+    } else {
+      script = `const puppeteer = require('puppeteer');\n\n(async () => {\n  const browser = await puppeteer.launch({ headless: false });\n  const page = await browser.newPage();\n\n`;
+      script += `  // Helper function to handle the repetitive "find and click" logic safely
+  async function clickXPath(xpath) {
+    try {
+      await page.waitForXPath(xpath, { timeout: 5000 });
+      const [element] = await page.$x(xpath);
+      if (element) await element.click();
+    } catch (e) {
+      console.warn(\`Could not find or click: \${xpath}\`);
+    }
+  }
+
+  // Helper function to handle the repetitive "find and fill" logic safely
+  async function fillXPath(xpath, value) {
+    try {
+      await page.waitForXPath(xpath, { timeout: 5000 });
+      const [element] = await page.$x(xpath);
+      if (element) await element.type(value);
+    } catch (e) {
+      console.warn(\`Could not find or fill: \${xpath}\`);
+    }
+  }\n\n`;
+    }
+
+    // Pick the best locator for a target element
+    function bestLocator(t) {
+      if (!t) return null;
+      if (t.testAttr) return { type: 'css', sel: t.testAttr.selector };
+      if (t.id) return { type: 'css', sel: '#' + t.id };
+      if (t.xpath) return { type: 'xpath', sel: t.xpath };
+      if (t.selectors && t.selectors.length > 0) return { type: 'css', sel: t.selectors[0] };
+      return { type: 'css', sel: (t.tagName || 'div').toLowerCase() };
+    }
+
+    function renderClick(t) {
+      const loc = bestLocator(t);
+      if (!loc) return '  // TODO: click unknown element\n';
+      if (loc.type === 'xpath') {
+        if (isPW) return "  await page.locator('xpath=" + loc.sel + "').click();\n";
+        return `  await clickXPath('${loc.sel.replace(/'/g, "\\'")}');\n`;
+      }
+      if (isPW) return "  await page.locator('" + loc.sel.replace(/'/g, "\\'") + "').click();\n";
+      return `  await page.click('${loc.sel.replace(/'/g, "\\'")}').catch(() => {});\n`;
+    }
+
+    function renderFill(t, value) {
+      const loc = bestLocator(t);
+      const safeVal = (value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      if (!loc) return "  // TODO: type '" + safeVal + "' into unknown element\n";
+      if (loc.type === 'xpath') {
+        if (isPW) return "  await page.locator('xpath=" + loc.sel + "').fill('" + safeVal + "');\n";
+        return `  await fillXPath('${loc.sel.replace(/'/g, "\\'")}', '${safeVal}');\n`;
+      }
+      if (isPW) return "  await page.locator('" + loc.sel.replace(/'/g, "\\'") + "').fill('" + safeVal + "');\n";
+      return `  await page.type('${loc.sel.replace(/'/g, "\\'")}', '${safeVal}');\n`;
+    }
+
+    // First navigation = starting URL
+    const firstNav = events.find(e => e.type === 'navigation');
+    if (firstNav) {
+      script += "  await page.goto('" + firstNav.url + "');\n";
+    } else {
+      script += "  // TODO: set start URL\n  // await page.goto('https://example.com');\n";
+    }
+
+    let firstNavSkipped = false;
+    events.forEach(e => {
+      if (e.type === 'navigation') {
+        if (!firstNavSkipped) { firstNavSkipped = true; return; } // already handled above
+        script += "  await page.goto('" + e.url + "');\n";
+      } else if (e.type === 'click') {
+        script += renderClick(e.target);
+      } else if (e.type === 'input') {
+        script += renderFill(e.target, e.value);
+      } else if (e.type === 'keydown') {
+        script += "  await page.keyboard.press('" + e.key + "');\n";
+      }
+    });
+
+    script += "\n  await browser.close();\n})();";
+
+    // Prepend a note if no test attributes found
+    const hasTestAttrs = events.some(e => e.target && e.target.testAttr);
+    if (!hasTestAttrs) {
+      script = "// Note: no test attributes (data-testid, data-cy, etc.) found.\n// Consider adding them to your app for more stable selectors.\n\n" + script;
+    }
+
+    const label = isPW ? 'Playwright Script' : 'Puppeteer Script';
+    showScriptModal(label, script);
+  }
+
+  // --- Share via Webhook (Modified) ---
+  // shareBtn definition moved above
   const webhookModal = document.getElementById('webhookModal');
   const closeWebhookBtn = document.getElementById('closeWebhookBtn');
   const sendWebhookBtn = document.getElementById('sendWebhookBtn');
@@ -542,16 +873,14 @@ document.addEventListener('DOMContentLoaded', () => {
   if (webhookHeaders) webhookHeaders.value = localStorage.getItem('signal_webhook_headers') || '';
   if (webhookPayload) webhookPayload.value = localStorage.getItem('signal_webhook_payload') || '{\n  "file": "%export%",\n  "screenshot": "%screenshot%",\n  "text": "New debug report"\n}';
 
+  // shareBtn handled by dropdown logic now
+  /*
   if (shareBtn) {
     shareBtn.addEventListener('click', () => {
-      if (!currentReportData) {
-        alert('No report loaded. Import a report first.');
-        return;
-      }
-      if (webhookModal) webhookModal.style.display = 'flex';
-      if (webhookStatus) webhookStatus.style.display = 'none';
+      // ... old logic
     });
   }
+  */
 
   if (closeWebhookBtn) {
     closeWebhookBtn.addEventListener('click', () => {
@@ -725,8 +1054,6 @@ document.addEventListener('DOMContentLoaded', () => {
   if (fileInput) fileInput.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
-    reportDateSpan.textContent = "Loading...";
 
     // Loading State
     const importBtnHeader = document.getElementById('importBtn');
@@ -1012,6 +1339,74 @@ document.addEventListener('DOMContentLoaded', () => {
       document.addEventListener('mouseup', onStop);
     });
   }
+
+  // Resizable Timeline Video Area
+  const videoResizer = document.getElementById('videoResizer');
+  const videoSection = document.getElementById('timelineVideoSection');
+  if (videoResizer && videoSection) {
+    const savedHeight = localStorage.getItem('signal_video_height');
+    if (savedHeight) {
+      videoSection.style.height = savedHeight + 'px';
+    }
+
+    videoResizer.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const startY = e.clientY;
+      const startHeight = videoSection.offsetHeight;
+      videoResizer.classList.add('active');
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'row-resize';
+
+      function onDrag(e) {
+        // Dragging down increases height
+        const newHeight = startHeight + (e.clientY - startY);
+        const minH = 100; // minimum video height
+        const maxH = window.innerHeight * 0.8;
+        videoSection.style.height = Math.max(minH, Math.min(maxH, newHeight)) + 'px';
+      }
+
+      function onStop() {
+        document.removeEventListener('mousemove', onDrag);
+        document.removeEventListener('mouseup', onStop);
+        videoResizer.classList.remove('active');
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        localStorage.setItem('signal_video_height', videoSection.offsetHeight);
+      }
+
+      document.addEventListener('mousemove', onDrag);
+      document.addEventListener('mouseup', onStop);
+    });
+  }
+
+  // Script Modal Logic
+  const scriptModal = document.getElementById('scriptModal');
+  const closeScriptBtn = document.getElementById('closeScriptBtn');
+  const scriptModalCloseBtn = document.getElementById('scriptModalCloseBtn');
+  const scriptModalCopyBtn = document.getElementById('scriptModalCopyBtn');
+  const scriptModalTextarea = document.getElementById('scriptModalTextarea');
+  const scriptModalTitle = document.getElementById('scriptModalTitle');
+
+  function showScriptModal(title, text) {
+    if (scriptModalTitle) scriptModalTitle.textContent = title;
+    if (scriptModalTextarea) scriptModalTextarea.value = text;
+    if (scriptModal) scriptModal.style.display = 'flex';
+  }
+
+  if (closeScriptBtn) closeScriptBtn.addEventListener('click', () => scriptModal.style.display = 'none');
+  if (scriptModalCloseBtn) scriptModalCloseBtn.addEventListener('click', () => scriptModal.style.display = 'none');
+  if (scriptModal) scriptModal.addEventListener('click', (e) => {
+    if (e.target === scriptModal) scriptModal.style.display = 'none';
+  });
+  if (scriptModalCopyBtn) scriptModalCopyBtn.addEventListener('click', () => {
+    if (scriptModalTextarea) {
+      navigator.clipboard.writeText(scriptModalTextarea.value).then(() => {
+        showToast('Copied to clipboard', 'success');
+      }).catch(() => {
+        showToast('Failed to copy to clipboard', 'error');
+      });
+    }
+  });
 
   // Request Composer Logic
   const requestComposer = document.getElementById('requestComposer');
@@ -1405,8 +1800,11 @@ function filterAndRenderNetwork() {
       valA = a.response.status || 0; valB = b.response.status || 0;
     } else if (currentNetworkSort.key === 'name') {
       valA = a.request.url || ''; valB = b.request.url || '';
-    } else if (currentNetworkSort.key === 'time') {
+    } else if (currentNetworkSort.key === 'time' || currentNetworkSort.key === 'duration') {
       valA = a.time || 0; valB = b.time || 0;
+    } else if (currentNetworkSort.key === 'size') {
+      valA = (a.response && a.response.content && a.response.content.size) || 0;
+      valB = (b.response && b.response.content && b.response.content.size) || 0;
     }
 
     if (valA < valB) return currentNetworkSort.dir === 'asc' ? -1 : 1;
@@ -1481,7 +1879,26 @@ function renderConsole(errors) {
   // Optimize with Fragment
   const fragment = document.createDocumentFragment();
 
+  // Group identical consecutive logs
+  const groupedErrors = [];
   errors.forEach(err => {
+    const last = groupedErrors[groupedErrors.length - 1];
+    const isSame = last &&
+      (last.text === err.text || last.message === err.message) &&
+      last.source === err.source &&
+      last.level === err.level &&
+      // Check timestamp equality (display time)
+      (new Date(last.timestamp).toLocaleTimeString() === new Date(err.timestamp).toLocaleTimeString());
+
+    if (isSame) {
+      last.count = (last.count || 1) + 1;
+    } else {
+      err.count = 1;
+      groupedErrors.push(err);
+    }
+  });
+
+  groupedErrors.forEach(err => {
     const tr = document.createElement('tr');
     tr.className = 'error-row';
     tr.style.cursor = 'pointer';
@@ -1495,11 +1912,16 @@ function renderConsole(errors) {
 
     const levelClass = err.level === 'error' ? 'badge-error' : (err.level === 'warning' ? 'badge-warn' : 'badge-info');
 
+    // Count Badge
+    const countBadge = err.count > 1
+      ? `<span class="badge" style="background:#555; color:white; margin-right:6px; font-size:10px; padding:1px 5px; border-radius:10px;">${err.count}</span>`
+      : '';
+
     tr.innerHTML = `
       <td class="meta" style="font-family:monospace;">${tsDisplay}</td>
       <td><span class="badge ${levelClass}">${err.level}</span></td>
       <td style="font-family:monospace; color:var(--text-secondary);">${err.source || 'console'}</td>
-      <td class="code" style="color:${err.level === 'error' ? 'var(--danger)' : 'inherit'};">${escapeHtml(err.text || err.message || '')}</td>
+      <td class="code" style="color:${err.level === 'error' ? 'var(--danger)' : 'inherit'};">${countBadge}${escapeHtml(err.text || err.message || '')}</td>
     `;
 
     tr.addEventListener('click', () => {
@@ -1511,6 +1933,35 @@ function renderConsole(errors) {
   });
 
   tbody.appendChild(fragment);
+}
+
+function formatDuration(ms) {
+  if (ms === 0 || ms === null || ms === undefined) return { text: 'Pending', color: '#6b7280' };
+  if (ms < 200) return { text: ms < 1 ? '<1ms' : Math.round(ms) + 'ms', color: '#4ade80' };   // green - fast
+  if (ms < 1000) return { text: Math.round(ms) + 'ms', color: '#fcd34d' };                      // yellow - ok
+  return { text: (ms / 1000).toFixed(2) + 's', color: '#f87171' };                              // red - slow
+}
+
+function formatSize(bytes) {
+  if (!bytes || bytes === 0) return '-';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+}
+
+function formatInitiator(initiator) {
+  if (!initiator) return '-';
+  if (initiator.type === 'parser') return 'Parser';
+  if (initiator.type === 'other') return 'Other';
+  if (initiator.type === 'script') {
+    const frame = initiator.stack && initiator.stack.callFrames && initiator.stack.callFrames[0];
+    if (frame) {
+      const file = (frame.url || '').split('/').pop().split('?')[0] || frame.url || 'script';
+      return file + (frame.lineNumber != null ? ':' + frame.lineNumber : '');
+    }
+    return 'Script';
+  }
+  return initiator.type || '-';
 }
 
 function renderNetwork(har) {
@@ -1568,14 +2019,29 @@ function renderNetwork(har) {
     }
 
     const timeStr = new Date(entry.startedDateTime).toLocaleTimeString('en-GB', { hour12: false });
+    const dur = formatDuration(entry.time);
+    const sizeBytes = entry.response && entry.response.content ? entry.response.content.size : 0;
+    const sizeStr = formatSize(sizeBytes);
+    const initiatorStr = formatInitiator(entry._initiator);
 
     tr.innerHTML = `
       <td class="meta" style="font-family:monospace; color:var(--text-secondary);">${timeStr}</td>
       <td style="font-weight:700; color:${methodColor};">${method}</td>
       <td><span class="badge ${statusClass}">${status}</span></td>
-      <td style="max-width:300px;">
+      <td>
+        <span style="
+          font-size:11px; font-weight:600; font-family:monospace;
+          color:${dur.color};
+          background:${dur.color}18;
+          padding:2px 6px; border-radius:4px;
+          border:1px solid ${dur.color}44;
+        ">${dur.text}</span>
+      </td>
+      <td style="font-family:monospace; font-size:11px; color:var(--text-secondary);">${sizeStr}</td>
+      <td style="max-width:280px;">
         <div style="font-weight:600; color:var(--text-main); margin-bottom:2px;">${escapeHtml(name)}</div>
         <div style="font-size:11px; color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(url)}</div>
+        ${initiatorStr !== '—' ? `<div style="font-size:10px; color:var(--text-secondary); margin-top:1px; opacity:0.7;">via ${escapeHtml(initiatorStr)}</div>` : ''}
       </td>
       <td>
         <button class="action-btn" style="padding:4px 8px; font-size:11px;">Resend</button>
@@ -1643,7 +2109,7 @@ function renderTimeline(userEvents, consoleErrors, networkEntries, issues, scree
   // Update global variable for screencast/timeline sync
   globalAllEvents = allEvents;
 
-  // Filter for table display (User Events & Issues only)
+  // Filter for table display: User Events and Issues only
   const tableEvents = allEvents.filter(e => e.source === 'user' || e.source === 'issue');
 
   if (tableEvents.length === 0) {
@@ -1657,11 +2123,100 @@ function renderTimeline(userEvents, consoleErrors, networkEntries, issues, scree
     const tr = document.createElement('tr');
     tr.style.cursor = 'pointer';
     tr.addEventListener('click', () => {
-      document.querySelectorAll('#timelineTable tr').forEach(r => r.classList.remove('selected'));
-      tr.classList.add('selected');
-      // Pause video if playing, then jump to event position
-      if (pauseScreencast) pauseScreencast();
+      // Jump to event position and start playing
       updatePreview(event.sortTime, screencast, allEvents);
+      highlightEventRow(event.sortTime);
+      // Start playback from the current frame
+      if (playScreencastFromIndex) playScreencastFromIndex(currentScreencastIndex);
+
+      // Restore the last active timeline tab (keeps user's chosen tab sticky across events)
+      if (event.source === 'user' || event.source === 'console' || event.source === 'issue') {
+        document.querySelectorAll('.timeline-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.timeline-panel').forEach(p => p.classList.remove('active'));
+
+        const targetTab = document.querySelector(`.timeline-tab[data-tab="${lastActiveTimelineTab}"]`);
+        if (targetTab) targetTab.classList.add('active');
+        const targetPanel = document.getElementById(`timeline-${lastActiveTimelineTab}`);
+        if (targetPanel) targetPanel.classList.add('active');
+      }
+
+      // Populate details panel content for user events
+      if (event.source === 'user') {
+        const content = document.getElementById('timelineDetailsContent');
+        if (content) {
+          const target = event.target || {};
+          let html = `
+                <div style="font-weight:600; font-size:14px; margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid var(--border-color);">
+                    ${event.type.toUpperCase()} on ${escapeHtml(target.tagName || 'ELEMENT')}
+                </div>
+                
+                <div style="display:grid; grid-template-columns: 120px 1fr; gap:10px; margin-bottom:5px;">
+                    <div style="color:var(--text-secondary);">Tag Name</div>
+                    <div style="font-family:monospace; color:var(--primary);">${escapeHtml(target.tagName || '')}</div>
+                </div>`;
+
+          if (target.id) {
+            html += `
+                <div style="display:grid; grid-template-columns: 120px 1fr; gap:10px; margin-bottom:5px;">
+                    <div style="color:var(--text-secondary);">ID</div>
+                    <div style="font-family:monospace;">${escapeHtml(target.id)}</div>
+                </div>`;
+          }
+
+          if (target.innerText) {
+            html += `
+                <div style="display:grid; grid-template-columns: 120px 1fr; gap:10px; margin-bottom:5px;">
+                    <div style="color:var(--text-secondary);">Inner Text</div>
+                    <div style="white-space:pre-wrap; background:var(--bg-input); padding:5px; border-radius:4px; max-height:100px; overflow-y:auto;">${escapeHtml(target.innerText)}</div>
+                </div>`;
+          }
+
+          if (target.xpath) {
+            html += `
+                <div style="margin-top:10px;">
+                    <div style="color:var(--text-secondary); margin-bottom:4px; display:flex; justify-content:space-between; align-items:center;">
+                        XPATH
+                        ${createCopyBtnHTML('detail-xpath')}
+                    </div>
+                    <div id="detail-xpath" style="font-family:monospace; background:var(--bg-input); padding:8px; border-radius:4px; word-break:break-all; font-size:12px;">${escapeHtml(target.xpath)}</div>
+                </div>`;
+          }
+
+          if (target.selectors && target.selectors.length > 0) {
+            html += `
+                <div style="margin-top:15px;">
+                    <div style="color:var(--text-secondary); margin-bottom:4px;">Ranked Selectors</div>
+                    <div style="display:flex; flex-direction:column; gap:4px;">
+                        ${target.selectors.map(s => `<div style="font-family:monospace; background:var(--bg-input); padding:4px 8px; border-radius:4px; font-size:12px;">${escapeHtml(s)}</div>`).join('')}
+                    </div>
+                </div>`;
+          }
+
+          if (target.nearestHeading) {
+            html += `
+                <div style="margin-top:15px;">
+                    <div style="color:var(--text-secondary); margin-bottom:4px;">Nearest Heading</div>
+                    <div style="font-style:italic; padding:4px 8px; border-left:3px solid var(--primary); background:var(--bg-input);">${escapeHtml(target.nearestHeading)}</div>
+                </div>`;
+          }
+
+          if (target.boundingBox) {
+            const b = target.boundingBox;
+            html += `
+                <div style="margin-top:15px;">
+                    <div style="color:var(--text-secondary); margin-bottom:4px;">Bounding Box</div>
+                    <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px; font-family:monospace; font-size:12px; text-align:center;">
+                        <div style="background:var(--bg-input); padding:4px; border-radius:4px;">x: ${b.x}</div>
+                        <div style="background:var(--bg-input); padding:4px; border-radius:4px;">y: ${b.y}</div>
+                        <div style="background:var(--bg-input); padding:4px; border-radius:4px;">w: ${b.width}</div>
+                        <div style="background:var(--bg-input); padding:4px; border-radius:4px;">h: ${b.height}</div>
+                    </div>
+                </div>`;
+          }
+
+          content.innerHTML = html;
+        }
+      }
     });
 
     let sourceDisplay = '';
@@ -1671,22 +2226,50 @@ function renderTimeline(userEvents, consoleErrors, networkEntries, issues, scree
     if (event.source === 'user') {
       sourceDisplay = `<span class="badge badge-info">USER</span>`;
       if (event.type === 'click') {
-        if (event.target.tagName === 'A' && event.target.innerText && event.target.innerText.trim()) {
-          details = `Clicked Link "<b>${escapeHtml(event.target.innerText.trim())}</b>"`;
-        } else {
-          details = `Clicked <b>${event.target.tagName}</b>`;
+        const target = event.target || {};
+        let extraInfo = '';
+        if (target.selectors && target.selectors.length > 0) {
+          extraInfo += `<div class="sub-detail" style="color:var(--text-secondary); font-size:11px; margin-top:2px;">Selector: <code style="background:var(--bg-input); padding:1px 4px; border-radius:3px;">${escapeHtml(target.selectors[0])}</code></div>`;
         }
-        if (event.target.xpath) details += ` <span style="color:#999; font-size:11px;">${escapeHtml(event.target.xpath)}</span>`;
+        if (target.nearestHeading) {
+          extraInfo += `<div class="sub-detail" style="color:var(--text-secondary); font-size:11px; margin-top:2px;">Near: "<b>${escapeHtml(target.nearestHeading)}</b>"</div>`;
+        }
+
+        details = `Clicked <b>${escapeHtml(target.tagName || 'ELEMENT')}</b>` +
+          (target.id ? ` #${escapeHtml(target.id)}` : '') +
+          (target.innerText ? ` ("${escapeHtml(target.innerText)}")` : '') +
+          extraInfo +
+          (target.xpath ? `<div class="sub-detail" title="${escapeHtml(target.xpath)}" style="font-size:10px; color:var(--text-disabled); margin-top:2px; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(target.xpath)}</div>` : '');
+
       } else if (event.type === 'keydown') {
         details = `Key: <b>${event.key}</b>`;
       } else if (event.type === 'input') {
-        details = `Input: "${escapeHtml(event.value)}"`;
+        const target = event.target || {};
+        let extraInfo = '';
+        if (target.selectors && target.selectors.length > 0) {
+          extraInfo += `<div class="sub-detail" style="color:var(--text-secondary); font-size:11px; margin-top:2px;">Selector: ${escapeHtml(target.selectors[0])}</div>`;
+        }
+        const lockIcon = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align:middle; margin-right:3px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>`;
+        const valueDisplay = event.piiMasked
+          ? `<span style="background:#f59e0b22; color:#f59e0b; border:1px solid #f59e0b44; border-radius:4px; padding:1px 6px; font-size:11px; font-weight:600;">${lockIcon}${escapeHtml(event.value)}</span>`
+          : `"<b>${escapeHtml(event.value)}</b>"`;
+        details = `Input: ${valueDisplay} on <span style="font-family:monospace;">${escapeHtml(target.tagName || 'ELEMENT')}${target.id ? '#' + escapeHtml(target.id) : ''}</span>` + extraInfo;
       } else if (event.type === 'navigation') {
         details = `Navigated to <a href="${event.url}" target="_blank">${escapeHtml(event.url)}</a>`;
       }
     } else if (event.source === 'issue') {
       sourceDisplay = `<span class="badge badge-error">ISSUE</span>`;
       details = `<b>Reported:</b> ${escapeHtml(event.comment)}`;
+    } else if (event.source === 'console') {
+      const level = event.level || 'log';
+      const levelClass = level === 'error' ? 'badge-error' : (level === 'warning' ? 'badge-warn' : 'badge-info');
+      sourceDisplay = `<span class="badge ${levelClass}">${level.toUpperCase()}</span>`;
+      const countBadge = event._count > 1
+        ? `<span style="display:inline-flex; align-items:center; justify-content:center; background:#555; color:white; font-size:10px; font-weight:700; min-width:18px; height:18px; padding:0 4px; border-radius:9px; margin-right:6px;">${event._count}</span>`
+        : '';
+      const msg = escapeHtml(event.text || event.message || '');
+      const src = event.url ? `<div class="sub-detail" style="color:var(--text-secondary); font-size:10px; margin-top:2px; font-family:monospace;">${escapeHtml(event.url)}${event.line ? ':' + event.line : ''}</div>` : '';
+      details = `${countBadge}<span style="font-family:monospace; color:${level === 'error' ? 'var(--danger)' : 'inherit'}">${msg}</span>${src}`;
     }
 
     let actionCell = '';
@@ -1971,12 +2554,14 @@ function highlightEventRow(timestamp) {
   rows.forEach(r => {
     r.style.outline = '';
     r.style.background = '';
+    r.classList.remove('selected');
     const icon = r.querySelector('.now-playing-icon');
     if (icon) icon.remove();
   });
 
   if (lastTableIndex >= 0 && lastTableIndex < rows.length) {
     const row = rows[lastTableIndex];
+    row.classList.add('selected');
     row.style.outline = '2px solid var(--primary)';
     row.style.background = 'rgba(46, 137, 255, 0.08)';
 
@@ -2098,16 +2683,60 @@ function showDetails(entry) {
         </div>
       </div>
       <div>
+        <div class="detail-key" style="margin-bottom:4px;">Duration</div>
+        <div class="detail-val">
+          ${(() => { const d = formatDuration(entry.time); return '<span style="font-family:monospace; font-weight:600; color:' + d.color + ';">' + d.text + '</span>'; })()}
+        </div>
+      </div>
+      <div>
+        <div class="detail-key" style="margin-bottom:4px;">Response Size</div>
+        <div class="detail-val" style="font-family:monospace;">${formatSize((entry.response && entry.response.content && entry.response.content.size) || 0)}</div>
+      </div>
+      <div>
         <div class="detail-key" style="margin-bottom:4px;">Remote Address</div>
         <div class="detail-val">${escapeHtml(remoteAddr)}</div>
+      </div>
+      <div>
+        <div class="detail-key" style="margin-bottom:4px;">Initiator</div>
+        <div class="detail-val" style="font-family:monospace; font-size:11px; word-break:break-all;">${escapeHtml(formatInitiator(entry._initiator))}</div>
       </div>
        <div>
         <div class="detail-key" style="margin-bottom:4px;">Referrer Policy</div>
         <div class="detail-val">${escapeHtml(referrerPolicy)}</div>
       </div>
     </div>
+
+    <div style="margin-top:15px; display:flex; gap:10px;">
+        <button id="btnCopyFetch" class="action-btn" style="padding:6px 10px; font-size:11px;">Copy as Fetch</button>
+        <button id="btnCopyCurl" class="action-btn" style="padding:6px 10px; font-size:11px;">Copy as cURL</button>
+    </div>
   `;
   document.getElementById('generalInfo').innerHTML = generalHtml;
+
+  // Bind Copy Buttons
+  setTimeout(() => {
+    const btnFetch = document.getElementById('btnCopyFetch');
+    const btnCurl = document.getElementById('btnCopyCurl');
+
+    if (btnFetch) {
+      btnFetch.onclick = () => {
+        const code = generateFetch(entry);
+        navigator.clipboard.writeText(code);
+        const original = btnFetch.innerText;
+        btnFetch.innerText = "Copied!";
+        setTimeout(() => btnFetch.innerText = original, 1500);
+      };
+    }
+    if (btnCurl) {
+      btnCurl.onclick = () => {
+        const code = generateCurl(entry);
+        navigator.clipboard.writeText(code);
+        const original = btnCurl.innerText;
+        btnCurl.innerText = "Copied!";
+        setTimeout(() => btnCurl.innerText = original, 1500);
+      };
+    }
+  }, 0);
 
   // 2. Headers
   const formatHeaders = (headers) => {
@@ -2348,6 +2977,9 @@ function renderScreencast(frames) {
       tab.classList.add('active');
       const target = document.getElementById(`timeline-${tab.dataset.tab}`);
       if (target) target.classList.add('active');
+
+      // Remember this tab for future event row selections
+      lastActiveTimelineTab = tab.dataset.tab;
     });
   });
 
@@ -2426,6 +3058,21 @@ function renderScreencast(frames) {
     }
   };
 
+  // Expose a global play function so clicking timeline rows can start playback
+  playScreencastFromIndex = function (fromIndex) {
+    if (isPlaying) {
+      clearTimeout(timeoutId);
+      isPlaying = false;
+    }
+    if (fromIndex >= 0 && fromIndex < frames.length) {
+      currentScreencastIndex = fromIndex;
+      showFrame(fromIndex);
+    }
+    if (!isPlaying) {
+      togglePlay();
+    }
+  };
+
   function showFrame(index) {
     if (index >= frames.length) index = frames.length - 1;
     if (index < 0) index = 0;
@@ -2443,6 +3090,146 @@ function renderScreencast(frames) {
     // Update Detail Tabs (Console/Network) to match video time
     updateTabsContent(currentFrameTime);
     highlightEventRow(currentFrameTime);
+
+    // Keep fullscreen overlay controls in sync
+    if (typeof syncFsControls === 'function') syncFsControls();
+
+    updateVideoHighlight(currentFrameTime);
+  }
+
+  function updateVideoHighlight(timestamp) {
+    const existing = document.getElementById('player-event-highlight');
+    if (existing) existing.remove();
+    const existingLabel = document.getElementById('player-event-highlight-label');
+    if (existingLabel) existingLabel.remove();
+
+    if (!globalAllEvents) return;
+
+    // Find the last user event that occurred at or slightly before this frame
+    let currentEvent = null;
+    const tableEvents = globalAllEvents.filter(e => e.source === 'user');
+    for (let i = tableEvents.length - 1; i >= 0; i--) {
+      if (tableEvents[i].sortTime <= timestamp + 100) {
+        // Only highlight if it's within 2 seconds of the event to fade it out naturally
+        if (timestamp - tableEvents[i].sortTime < 2000) {
+          currentEvent = tableEvents[i];
+        }
+        break;
+      }
+    }
+
+    if (!currentEvent || !currentEvent.target || !currentEvent.target.boundingBox) return;
+    const box = currentEvent.target.boundingBox;
+
+    // Ignore invalid bounds
+    if (box.width === 0 && box.height === 0) return;
+
+    const img = document.getElementById('screenPlayer');
+    const wrapper = document.getElementById('screenPlayerWrapper');
+    if (!img || !wrapper || !img.naturalWidth || !img.naturalHeight) return;
+
+    const imgRatio = img.naturalWidth / img.naturalHeight;
+    const bounds = img.getBoundingClientRect();
+    const wrapperBounds = wrapper.getBoundingClientRect();
+    const boundsRatio = bounds.width / bounds.height;
+
+    let renderedWidth, renderedHeight, offsetX = 0, offsetY = 0;
+
+    if (imgRatio > boundsRatio) {
+      renderedWidth = bounds.width;
+      renderedHeight = bounds.width / imgRatio;
+      offsetY = (bounds.height - renderedHeight) / 2;
+    } else {
+      renderedHeight = bounds.height;
+      renderedWidth = bounds.height * imgRatio;
+      offsetX = (bounds.width - renderedWidth) / 2;
+    }
+
+    let viewportW = img.naturalWidth;
+    let viewportH = img.naturalHeight;
+
+    if (currentReportData && currentReportData.environment && currentReportData.environment.windowInnerSize) {
+      const parts = currentReportData.environment.windowInnerSize.split('x');
+      if (parts.length === 2) {
+        viewportW = parseInt(parts[0], 10);
+        viewportH = parseInt(parts[1], 10);
+      }
+    }
+
+    const scaleX = renderedWidth / viewportW;
+    const scaleY = renderedHeight / viewportH;
+
+    // Calculate relative to wrapper by taking img offset within wrapper
+    const relativeX = (bounds.left - wrapperBounds.left) + offsetX + (box.x * scaleX);
+    const relativeY = (bounds.top - wrapperBounds.top) + offsetY + (box.y * scaleY);
+    const scaledW = box.width * scaleX;
+    const scaledH = box.height * scaleY;
+
+    // Determine fade based on age of event
+    const age = timestamp - currentEvent.sortTime;
+    const opacity = age < 500 ? 1 : Math.max(0.3, 1 - (age - 500) / 1500);
+
+    // Event type determines color
+    const isClick = currentEvent.type === 'click';
+    const highlightColor = isClick ? '136, 98, 237' : '255, 166, 0'; // purple for clicks, orange for inputs
+    const labelBg = isClick ? 'rgba(136, 98, 237, 0.9)' : 'rgba(255, 166, 0, 0.9)';
+
+    const overlay = document.createElement('div');
+    overlay.id = 'player-event-highlight';
+    overlay.style.cssText = `
+      position: absolute;
+      border: 2.5px solid rgba(${highlightColor}, ${opacity});
+      background-color: rgba(${highlightColor}, ${0.18 * opacity});
+      border-radius: 4px;
+      pointer-events: none;
+      z-index: 100;
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.15), 0 0 14px rgba(${highlightColor}, ${0.5 * opacity});
+      transition: opacity 0.15s ease, box-shadow 0.15s ease;
+      left: ${relativeX}px;
+      top: ${relativeY}px;
+      width: ${scaledW}px;
+      height: ${scaledH}px;
+    `;
+    if (age < 400) {
+      overlay.style.animation = 'video-highlight-pulse 0.6s ease-out';
+    }
+    wrapper.appendChild(overlay);
+
+    // Build event label
+    const target = currentEvent.target || {};
+    let labelText = currentEvent.type.toUpperCase();
+    if (target.innerText) {
+      const clean = target.innerText.replace(/\s+/g, ' ').trim();
+      if (clean.length > 0) labelText += ': "' + (clean.length > 25 ? clean.substring(0, 25) + '...' : clean) + '"';
+    } else if (target.tagName) {
+      labelText += ': <' + target.tagName.toLowerCase() + '>';
+    }
+
+    const label = document.createElement('div');
+    label.id = 'player-event-highlight-label';
+    // Position label above the highlight box, or below if too close to top
+    const labelAbove = relativeY > 28;
+    label.style.cssText = `
+      position: absolute;
+      left: ${relativeX}px;
+      ${labelAbove ? 'top: ' + (relativeY - 24) + 'px' : 'top: ' + (relativeY + scaledH + 4) + 'px'};
+      background: ${labelBg};
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 3px;
+      pointer-events: none;
+      z-index: 101;
+      white-space: nowrap;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      opacity: ${opacity};
+      transition: opacity 0.15s ease;
+      letter-spacing: 0.3px;
+    `;
+    label.textContent = labelText;
+    wrapper.appendChild(label);
   }
 
   showFrame(0);
@@ -2454,13 +3241,103 @@ function renderScreencast(frames) {
 
   playBtn.onclick = togglePlay;
 
+  // --- Fullscreen overlay controls ---
+  const fullscreenBtn = document.getElementById('fullscreenBtn');
+  const fullscreenIcon = document.getElementById('fullscreenIcon');
+  const playerWrapper = document.getElementById('screenPlayerWrapper');
+  const fsPlayBtn = document.getElementById('fsPlayBtn');
+  const fsScrubber = document.getElementById('fsScrubber');
+  const fsTimeDisplay = document.getElementById('fsTimeDisplay');
+  const fsExitBtn = document.getElementById('fsExitBtn');
+
+  const expandSVG = `<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>`;
+  const compressSVG = `<path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>`;
+
+  function syncFsControls() {
+    // Look up elements at call-time to avoid TDZ issues during early showFrame(0) call
+    const fsScrub = document.getElementById('fsScrubber');
+    const fsTDisp = document.getElementById('fsTimeDisplay');
+    const mainScrub = document.getElementById('scrubber');
+    const mainTDisp = document.getElementById('timeDisplay');
+    if (fsScrub && mainScrub) { fsScrub.value = mainScrub.value; fsScrub.max = mainScrub.max; }
+    if (fsTDisp && mainTDisp) fsTDisp.textContent = mainTDisp.textContent;
+  }
+
+  // fs play button mirrors main play button
+  if (fsPlayBtn) fsPlayBtn.onclick = togglePlay;
+
+  // fs scrubber mirrors main scrubber behaviour
+  if (fsScrubber) {
+    fsScrubber.addEventListener('input', (e) => {
+      scrubber.value = e.target.value;
+      showFrame(parseInt(e.target.value));
+      if (isPlaying) togglePlay();
+    });
+  }
+
+  // Space bar plays/pauses when in fullscreen
+  if (playerWrapper) {
+    playerWrapper.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+    });
+    // Make wrapper focusable so it receives keydown
+    playerWrapper.setAttribute('tabindex', '0');
+  }
+
+  // Exit button inside overlay
+  if (fsExitBtn) {
+    fsExitBtn.addEventListener('click', () => {
+      (document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen).call(document);
+    });
+  }
+
+  // Enter fullscreen
+  if (fullscreenBtn && playerWrapper) {
+    fullscreenBtn.addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        (playerWrapper.requestFullscreen || playerWrapper.webkitRequestFullscreen || playerWrapper.mozRequestFullScreen)
+          .call(playerWrapper);
+        // Focus wrapper so Space keydown works immediately
+        setTimeout(() => playerWrapper.focus(), 100);
+      } else {
+        (document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen).call(document);
+      }
+    });
+  }
+
+  document.addEventListener('fullscreenchange', () => {
+    const isFs = !!document.fullscreenElement;
+    const fsControls = document.getElementById('fsControls');
+    const playerImg = document.getElementById('screenPlayer');
+
+    // Show/hide overlay controls via JS (CSS :fullscreen unreliable in extension pages)
+    if (fsControls) fsControls.style.display = isFs ? 'flex' : 'none';
+
+    if (fullscreenIcon) fullscreenIcon.innerHTML = isFs ? compressSVG : expandSVG;
+    if (fullscreenBtn) fullscreenBtn.title = isFs ? 'Exit Fullscreen' : 'Fullscreen';
+
+    if (isFs) {
+      if (playerImg) playerImg.style.maxHeight = '100vh';
+      if (playerWrapper) playerWrapper.style.maxHeight = '100vh';
+      syncFsControls();
+      playerWrapper && playerWrapper.focus();
+    } else {
+      if (playerImg) playerImg.style.maxHeight = '300px';
+      if (playerWrapper) playerWrapper.style.maxHeight = '300px';
+    }
+  });
+
   function togglePlay() {
+    const playIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+    const pauseIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
     if (isPlaying) {
       clearTimeout(timeoutId);
-      playBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg> Play`;
+      playBtn.innerHTML = playIcon + ' Play';
+      if (fsPlayBtn) fsPlayBtn.innerHTML = playIcon + ' Play';
       isPlaying = false;
     } else {
-      playBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause`;
+      playBtn.innerHTML = pauseIcon + ' Pause';
+      if (fsPlayBtn) fsPlayBtn.innerHTML = pauseIcon + ' Pause';
       isPlaying = true;
       playNextFrame();
     }
@@ -2986,4 +3863,44 @@ function openRequestComposer(entry) {
   if (defaultTab) defaultTab.click();
 
   modal.style.display = 'flex';
+}
+
+function generateFetch(entry) {
+  const method = entry.request.method;
+  const url = entry.request.url;
+  const headers = {};
+  entry.request.headers.forEach(h => headers[h.name] = h.value);
+
+  // Simplistic body handling
+  let body = undefined;
+  if (entry.request.postData && entry.request.postData.text) {
+    body = entry.request.postData.text;
+  }
+
+  const options = {
+    method: method,
+    headers: headers,
+    body: body
+  };
+
+  // Pretty print
+  return `fetch("${url}", ${JSON.stringify(options, null, 2)});`;
+}
+
+function generateCurl(entry) {
+  let curl = `curl '${entry.request.url}'`;
+
+  curl += ` \\\n  -X '${entry.request.method}'`;
+
+  entry.request.headers.forEach(h => {
+    curl += ` \\\n  -H '${h.name}: ${h.value}'`;
+  });
+
+  if (entry.request.postData && entry.request.postData.text) {
+    // Simple escape for single quotes
+    const body = entry.request.postData.text.replace(/'/g, "'\\''");
+    curl += ` \\\n  --data-raw '${body}'`;
+  }
+
+  return curl;
 }
