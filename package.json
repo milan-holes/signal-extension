@@ -1,0 +1,50 @@
+{
+  "name": "signal-extension",
+  "private": true,
+  "version": "1.0.0",
+  "description": "> **The Ultimate Debugging & Reporting Companion for Chrome**",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch & vite build --watch --config vite.config.content.ts & vite build --watch --config vite.config.background.ts",
+    "build": "vite build && vite build --config vite.config.content.ts && vite build --config vite.config.background.ts",
+    "build:check": "vue-tsc --noEmit && vite build && vite build --config vite.config.content.ts && vite build --config vite.config.background.ts",
+    "build:content": "vite build --config vite.config.content.ts",
+    "build:background": "vite build --config vite.config.background.ts",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/milan-holes/signal-extension.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/milan-holes/signal-extension/issues"
+  },
+  "homepage": "https://github.com/milan-holes/signal-extension#readme",
+  "dependencies": {
+    "html2canvas": "^1.4.1",
+    "vue": "^3.5.29"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@tailwindcss/vite": "^4.2.1",
+    "@types/chrome": "^0.1.37",
+    "@types/puppeteer": "^5.4.7",
+    "@vitejs/plugin-vue": "^5.2.3",
+    "@vitest/coverage-v8": "^4.0.18",
+    "@vue/test-utils": "^2.4.6",
+    "autoprefixer": "^10.4.27",
+    "jsdom": "^28.1.0",
+    "postcss": "^8.5.8",
+    "puppeteer": "^24.38.0",
+    "tailwindcss": "^4.2.1",
+    "typescript": "^5.7.3",
+    "vite": "^6.3.5",
+    "vitest": "^4.0.18",
+    "vue-tsc": "^2.2.8"
+  }
+}
