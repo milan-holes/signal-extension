@@ -118,6 +118,7 @@ const cancelRecording = () => {
 };
 
 const createReport = () => {
+  console.log('[Signal Widget] Creating report - dispatching signal-create-report event');
   window.dispatchEvent(new CustomEvent('signal-create-report'));
 };
 

@@ -7,25 +7,25 @@
     :style="{ top: pos.y + 'px', left: pos.x + 'px', right: 'auto', position: 'fixed', zIndex: 2147483647 }"
   >
     <!-- Header -->
-    <header 
-        class="sr-header" 
+    <header
+        class="sr-header"
         :class="{ 'dragging': isDragging }"
         @mousedown="startDrag"
     >
       <div class="sr-title-container">
         <div class="sr-title-icon-wrapper">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" class="sr-icon" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" class="sr-icon" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
         </div>
         <div>
           <h2 class="sr-title-text">Signal - Replay Events</h2>
-          <p class="sr-title-subtext">Premium Control</p>
+          <p class="sr-title-subtext">PREMIUM CONTROL</p>
         </div>
       </div>
       <div class="sr-header-actions">
         <div class="sr-counter-badge">
           <span>{{ completedCount }} / {{ localEvents.length }}</span>
         </div>
-        <button v-show="!readyMode" class="sr-icon-btn" @click="togglePause" :title="isPaused ? 'Resume replay' : 'Pause replay'">
+        <button v-show="!readyMode && !isFinished" class="sr-icon-btn" @click="togglePause" :title="isPaused ? 'Resume replay' : 'Pause replay'">
           <svg v-if="!isPaused" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
           <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         </button>
@@ -34,6 +34,22 @@
         </button>
       </div>
     </header>
+
+    <!-- Loading/Navigation Indicator -->
+    <div v-if="isNavigating || isWaitingForDOM" class="sr-loading-banner">
+      <div class="sr-loading-spinner"></div>
+      <span>{{ isNavigating ? 'Navigating to page...' : 'Waiting for page to load...' }}</span>
+    </div>
+
+    <!-- Element Not Found Warning -->
+    <div v-if="elementNotFoundWarning" class="sr-warning-banner">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+        <line x1="12" y1="9" x2="12" y2="13"></line>
+        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+      </svg>
+      <span>{{ elementNotFoundWarning }}</span>
+    </div>
 
     <!-- Toolbar -->
     <div v-show="!isFinished" class="sr-toolbar">
@@ -65,13 +81,29 @@
 
     <!-- Event List -->
     <div class="sr-event-list custom-scrollbar" ref="listEl">
-      <div 
-        v-for="(event, index) in localEvents" 
+      <div
+        v-for="(event, index) in localEvents"
         :key="index"
         class="sr-event-row group"
-        :class="{ 'skipped': getEventClasses(index) === 'skipped' }"
+        :class="{
+          'skipped': getEventClasses(index) === 'skipped',
+          'sr-event-active': eventStatuses[index] === 'active',
+          'sr-event-countdown': eventStatuses[index] === 'countdown'
+        }"
       >
-        <div class="sr-event-status-icon" v-html="getEventStatusIcon(index)">
+        <div
+          class="sr-event-status-icon"
+          :class="{ 'sr-countdown-interactive': isCountdown(index) }"
+          @click="isCountdown(index) ? skipCurrentEvent() : null"
+          :title="isCountdown(index) ? 'Click to execute now' : ''"
+        >
+          <span v-if="isCountdown(index)" class="sr-countdown-number">{{ countdownValues[index] || 0 }}s</span>
+          <span v-else v-html="getEventStatusIcon(index)"></span>
+          <div v-if="isCountdown(index)" class="sr-countdown-play-overlay">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+          </div>
         </div>
         <div class="sr-event-content">
           <div class="sr-event-content-header">
@@ -79,18 +111,32 @@
             <span class="sr-event-title">{{ index + 1 }}. {{ getEventLabelShort(event) }}</span>
           </div>
           <p class="sr-event-desc" :title="getEventLabel(event)">{{ getEventLabelDesc(event) }}</p>
+          <div v-if="eventErrors[index]" class="sr-event-error">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <span>{{ eventErrors[index] }}</span>
+          </div>
         </div>
         
         <div class="sr-event-actions hover-actions">
-          <button v-show="isCountdown(index)" class="sr-row-action-btn" @click="skipEvent" title="Execute now">▶</button>
+          <button v-show="isCountdown(index) || eventStatuses[index] === 'active'" class="sr-row-action-btn sr-pause-btn" @click="togglePause" :title="isPaused ? 'Resume replay' : 'Pause replay'">
+            <svg v-if="!isPaused" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+            <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          </button>
+          <button v-show="isCountdown(index)" class="sr-row-action-btn" @click="skipCurrentEvent" title="Skip this event">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4l10 8-10 8V4z"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+          </button>
           <button v-show="isError(index)" class="sr-row-action-btn" @click="retryEvent(index)" title="Retry this event">↻</button>
-          
-          <button class="sr-row-action-btn hover-primary" @click="copySelector(event, index)" title="Copy Selector">
+
+          <button v-show="!executing" class="sr-row-action-btn hover-primary" @click="copySelector(event, index)" title="Copy Selector">
             <svg v-if="copiedIndex !== index" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
             <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
           </button>
-          <button class="sr-row-action-btn hover-primary" @click="inspectEvent(event, index)" title="Highlight & Log Element">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <button v-show="!executing" class="sr-row-action-btn hover-primary" @click="inspectEvent(event, index)" :disabled="!canHighlightEvent(event)" :title="canHighlightEvent(event) ? 'Highlight & Log Element' : 'Element not found on page'">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
           </button>
           <button v-show="!executing" class="sr-row-action-btn danger" @click="removeEvent(index)" title="Remove">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
@@ -102,13 +148,22 @@
     <!-- Footer -->
     <footer class="sr-footer">
       <button v-show="!executing && !isFinished" class="sr-primary-btn" @click="startReplay" :disabled="isStarting">
-        <svg v-if="!isStarting" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        <svg v-if="!isStarting" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         <span>{{ isStarting ? 'Starting...' : 'Start Replay' }}</span>
       </button>
 
       <button v-show="isFinished" class="sr-secondary-btn" @click="restartReplay">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6"></path><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path></svg>
         <span>{{ errorCount > 0 ? 'Restart Replay' : 'Replay Again' }}</span>
+      </button>
+
+      <button v-show="hasIssues" class="sr-toggle-issues-btn" @click="toggleIssues">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <span>{{ showIssues ? 'Hide' : 'Show' }} Issues ({{ currentPageIssues.length }})</span>
       </button>
 
       <p class="sr-footer-message" :class="footerType === 'error' ? 'text-red-400' : 'text-slate-500'">
@@ -134,26 +189,36 @@ const props = defineProps<{
   tabId: number;
   readyMode: boolean;
   defaultDelay: number | null;
+  issues?: any[];
 }>();
 
-const emit = defineEmits(['start', 'pause', 'resume', 'close', 'skip', 'cancel', 'retried', 'removed', 'delay-changed']);
+const emit = defineEmits(['start', 'pause', 'resume', 'close', 'skip', 'cancel', 'retried', 'removed', 'delay-changed', 'toggle-issues']);
 
 const isVisible = ref(true);
 const isPaused = ref(false);
-const executing = ref(false);
+const executing = ref(!props.readyMode); // If not in ready mode, replay is already executing
 const isStarting = ref(false);
 const isFinished = ref(false);
 const errorCount = ref(0);
 const footerMessage = ref('Review events and click Start when ready');
 const footerType = ref('normal'); // 'normal', 'success', 'error', 'cancelled'
 const copiedIndex = ref<number | null>(null);
+const showIssues = ref(false);
 
 const eventStatuses = ref<Record<number, string>>({}); // 'active', 'done', 'error', 'countdown'
 const countdownValues = ref<Record<number, number>>({});
+const eventErrors = ref<Record<number, string>>({});
+const countdownInterval = ref<number | null>(null);
 
 const localEvents = ref([...props.events]);
 
 const selectedDelay = ref(props.defaultDelay === null ? 'auto' : String(props.defaultDelay));
+
+// Loading and warning states
+const isNavigating = ref(false);
+const isWaitingForDOM = ref(false);
+const elementNotFoundWarning = ref('');
+let elementWarningTimeout: number | null = null;
 
 // DOM ref
 const listEl = ref<HTMLElement | null>(null);
@@ -161,6 +226,8 @@ const listEl = ref<HTMLElement | null>(null);
 // Highlight state
 const highlightRect = ref<{ x: number, y: number, w: number, h: number, desc: string } | null>(null);
 const highlightEvent = ref<any>(null);
+const highlightElement = ref<HTMLElement | null>(null);
+const highlightUpdateInterval = ref<number | null>(null);
 
 const highlightStyle = computed(() => {
     if (!highlightRect.value) return {};
@@ -216,6 +283,45 @@ const footerHTML = computed(() => {
     return footerMessage.value;
 });
 
+const currentPageIssues = computed(() => {
+    if (!props.issues || props.issues.length === 0) return [];
+
+    const currentUrl = window.location.href;
+    return props.issues.filter((issue: any) => {
+        // If issue doesn't have a URL, include it (backward compatibility)
+        if (!issue.url) return true;
+        // Match exact URL or same page (ignoring hash/query params for flexibility)
+        try {
+            const issueUrl = new URL(issue.url);
+            const pageUrl = new URL(currentUrl);
+            return issueUrl.origin === pageUrl.origin && issueUrl.pathname === pageUrl.pathname;
+        } catch {
+            return issue.url === currentUrl;
+        }
+    });
+});
+
+const hasIssues = computed(() => {
+    return currentPageIssues.value.length > 0;
+});
+
+const toggleIssues = () => {
+    const newState = !showIssues.value;
+    showIssues.value = newState;
+
+    // Auto-pause when showing issues
+    if (newState && executing.value && !isPaused.value) {
+        togglePause();
+    }
+
+    emit('toggle-issues', newState, currentPageIssues.value);
+};
+
+const canHighlightEvent = (event: any): boolean => {
+    const el = findElementByEvent(event);
+    return el !== null;
+};
+
 // Drag Methods
 const startDrag = (e: MouseEvent) => {
     if ((e.target as Element).closest('.sr-btn')) return;
@@ -254,6 +360,11 @@ onMounted(() => {
 onUnmounted(() => {
     document.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseup', onMouseUp);
+    clearHighlight();
+    if (countdownInterval.value) {
+        clearInterval(countdownInterval.value);
+        countdownInterval.value = null;
+    }
     delete (window as any)._updateReplayWidgetEvent;
     delete (window as any)._showReplayFinished;
     delete (window as any)._startReplayCountdown;
@@ -287,6 +398,10 @@ const close = () => {
 
 const skipEvent = () => {
     chrome.runtime.sendMessage({ action: 'replaySkip', tabId: props.tabId });
+};
+
+const skipCurrentEvent = () => {
+    chrome.runtime.sendMessage({ action: 'replaySkipEvent', tabId: props.tabId });
 };
 
 const cancelReplay = () => {
@@ -330,58 +445,99 @@ const copySelector = (event: any, index: number) => {
     }
 };
 
-const inspectEvent = (event: any, index: number) => {
-    // Attempt to locate and highlight
-    let el = null;
-    if (event.target?.xpath) {
-        try { el = document.evaluate(event.target.xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue as HTMLElement; } catch (e) {}
+const updateHighlightPosition = () => {
+    if (!highlightElement.value) return;
+    const rect = highlightElement.value.getBoundingClientRect();
+    if (highlightRect.value) {
+        // Use fixed positioning - no need to add scroll offsets
+        highlightRect.value.x = rect.left - 4;
+        highlightRect.value.y = rect.top - 4;
+        highlightRect.value.w = rect.width + 8;
+        highlightRect.value.h = rect.height + 8;
     }
-    if (!el && event.target?.id) el = document.getElementById(event.target.id);
+};
+
+const findElementByEvent = (event: any): HTMLElement | null => {
+    let el: HTMLElement | null = null;
+
+    // Try different selector strategies in priority order
+    if (event.target?.testAttr?.selector) {
+        try { el = document.querySelector(event.target.testAttr.selector) as HTMLElement; } catch(e) {}
+    }
+    if (!el && event.target?.id) {
+        el = document.getElementById(event.target.id);
+    }
     if (!el && event.target?.selectors?.length > 0) {
         try { el = document.querySelector(event.target.selectors[0]) as HTMLElement; } catch(e) {}
     }
-    
+    if (!el && event.target?.xpath) {
+        try { el = document.evaluate(event.target.xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue as HTMLElement; } catch (e) {}
+    }
+
+    return el;
+};
+
+const clearHighlight = () => {
+    highlightRect.value = null;
+    highlightEvent.value = null;
+    highlightElement.value = null;
+    if (highlightUpdateInterval.value) {
+        clearInterval(highlightUpdateInterval.value);
+        highlightUpdateInterval.value = null;
+    }
+};
+
+const inspectEvent = (event: any, index: number) => {
+    const el = findElementByEvent(event);
+
     if (el) {
         console.log(`%c[Signal Recorder]%c Inspected Element (Row ${index + 1}):`, 'color:#4ca6ff;font-weight:bold', 'color:inherit', el);
         el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+
+        highlightElement.value = el;
         const rect = el.getBoundingClientRect();
         highlightRect.value = {
-            x: rect.left + window.scrollX - 4,
-            y: rect.top + window.scrollY - 4,
+            x: rect.left - 4,
+            y: rect.top - 4,
             w: rect.width + 8,
             h: rect.height + 8,
             desc: getEventLabel(event)
         };
         highlightEvent.value = event;
-        setTimeout(() => { highlightRect.value = null; }, 5000);
+
+        // Start dynamic position update
+        if (highlightUpdateInterval.value) clearInterval(highlightUpdateInterval.value);
+        highlightUpdateInterval.value = window.setInterval(updateHighlightPosition, 100);
+    } else {
+        console.warn(`%c[Signal Recorder]%c Element not found for event (Row ${index + 1})`, 'color:#4ca6ff;font-weight:bold', 'color:#f87171');
     }
 };
 
 const highlightTarget = (event: any, index: number) => {
     if (!event) {
-        highlightRect.value = null;
-        highlightEvent.value = null;
+        clearHighlight();
         return;
     }
-    let el: HTMLElement | null = null;
-    if (event.target?.xpath) {
-        try { el = document.evaluate(event.target.xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue as HTMLElement; } catch (e) {}
-    }
-    if (!el && event.target?.id) el = document.getElementById(event.target.id);
-    if (!el && event.target?.selectors?.length > 0) {
-        try { el = document.querySelector(event.target.selectors[0]) as HTMLElement; } catch(e) {}
-    }
+
+    const el = findElementByEvent(event);
+
     if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+
+        highlightElement.value = el;
         const rect = el.getBoundingClientRect();
         highlightRect.value = {
-            x: rect.left + window.scrollX - 4,
-            y: rect.top + window.scrollY - 4,
+            x: rect.left - 4,
+            y: rect.top - 4,
             w: rect.width + 8,
             h: rect.height + 8,
             desc: getEventLabel(event)
         };
         highlightEvent.value = event;
+
+        // Start dynamic position update
+        if (highlightUpdateInterval.value) clearInterval(highlightUpdateInterval.value);
+        highlightUpdateInterval.value = window.setInterval(updateHighlightPosition, 100);
     }
 };
 
@@ -393,6 +549,33 @@ const removeEvent = (index: number) => {
         }
     });
 };
+
+const showElementNotFoundWarning = (message: string) => {
+    elementNotFoundWarning.value = message;
+    if (elementWarningTimeout) clearTimeout(elementWarningTimeout);
+    elementWarningTimeout = window.setTimeout(() => {
+        elementNotFoundWarning.value = '';
+    }, 8000);
+};
+
+const clearElementWarning = () => {
+    elementNotFoundWarning.value = '';
+    if (elementWarningTimeout) clearTimeout(elementWarningTimeout);
+};
+
+const setNavigationState = (navigating: boolean) => {
+    isNavigating.value = navigating;
+};
+
+const setDOMLoadingState = (loading: boolean) => {
+    isWaitingForDOM.value = loading;
+};
+
+// Expose functions for external calls from content script
+(window as any)._replayWidgetShowElementWarning = showElementNotFoundWarning;
+(window as any)._replayWidgetClearElementWarning = clearElementWarning;
+(window as any)._replayWidgetSetNavigating = setNavigationState;
+(window as any)._replayWidgetSetDOMLoading = setDOMLoadingState;
 
 const getEventLabel = (e: any) => {
     let descText = '';
@@ -410,7 +593,7 @@ const getEventLabel = (e: any) => {
             descText = descText.substring(0, 30) + '...';
         }
     }
-    
+
     if (e.type === 'click') {
         return 'Click ' + (descText ? '"' + descText + '"' : (e.target?.tagName ? '<' + e.target.tagName.toLowerCase() + '>' : ''));
     } else {
@@ -426,7 +609,7 @@ const getEventClasses = (index: number) => {
 };
 
 const getEventStatusIcon = (index: number) => {
-    if (eventStatuses.value[index] === 'countdown') return `<span class="sr-event-status-countdown">${countdownValues.value[index] || ''}</span>`;
+    // Countdown is now handled in the template, not here
     if (eventStatuses.value[index] === 'done') return '<span class="sr-event-status-done">✓</span>';
     if (eventStatuses.value[index] === 'error') return '<span class="sr-event-status-error">✗</span>';
     if (eventStatuses.value[index] === 'active') return '<span class="sr-event-status-active">▶</span>';
@@ -464,17 +647,27 @@ const isCountdown = (index: number) => eventStatuses.value[index] === 'countdown
 const isError = (index: number) => eventStatuses.value[index] === 'error';
 
 // External Controller Methods (Called by Background script -> map back here)
-const updateEvent = (index: number, status: string, total: number) => {
+const updateEvent = (index: number, status: string, total: number, errorMessage?: string) => {
     // Clear countdowns
     for (const key in eventStatuses.value) {
         if (eventStatuses.value[key] === 'countdown') delete eventStatuses.value[key];
     }
-    
+
     eventStatuses.value[index] = status;
+
+    // Store error message if status is error
+    if (status === 'error' && errorMessage) {
+        eventErrors.value[index] = errorMessage;
+    }
+
     if (status === 'active') {
         isStarting.value = false;
         footerMessage.value = `Executing event ${index + 1} of ${total}...`;
         scrollToActiveRow(index);
+    }
+    // Clear highlight when event completes (done or error)
+    if (status === 'done' || status === 'error') {
+        clearHighlight();
     }
 };
 
@@ -482,9 +675,29 @@ const setCountdown = (index: number, duration: number) => {
     eventStatuses.value[index] = 'countdown';
     countdownValues.value[index] = Math.ceil(duration / 1000);
     scrollToActiveRow(index);
-};
 
-// Also used by a global interval to tick down countdownValues if needed.
+    // Start countdown timer if not already running
+    if (!countdownInterval.value) {
+        countdownInterval.value = window.setInterval(() => {
+            // Don't countdown if paused
+            if (isPaused.value) return;
+
+            let hasActiveCountdown = false;
+            for (const key in countdownValues.value) {
+                const idx = parseInt(key);
+                if (eventStatuses.value[idx] === 'countdown' && countdownValues.value[idx] > 0) {
+                    countdownValues.value[idx]--;
+                    hasActiveCountdown = true;
+                }
+            }
+            // Stop interval if no active countdowns
+            if (!hasActiveCountdown && countdownInterval.value) {
+                clearInterval(countdownInterval.value);
+                countdownInterval.value = null;
+            }
+        }, 1000);
+    }
+};
 
 const scrollToActiveRow = (index: number) => {
     nextTick(() => {
@@ -535,11 +748,28 @@ const setCancelled = (completed: number, total: number) => {
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
     color: white;
     width: 100%;
-    min-width: 360px;
+    min-width: 320px;
     max-width: 460px;
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    max-height: calc(100vh - 32px);
+}
+
+@media (max-width: 768px) {
+    #signal-replay-widget {
+        min-width: 280px;
+        max-width: calc(100vw - 32px);
+        border-radius: 12px;
+    }
+}
+
+@media (max-width: 480px) {
+    #signal-replay-widget {
+        min-width: 260px;
+        max-width: calc(100vw - 16px);
+        border-radius: 8px;
+    }
 }
 
 #signal-replay-widget * {
@@ -550,9 +780,21 @@ const setCancelled = (completed: number, total: number) => {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 20px 24px;
+    padding: 14px 16px;
     border-bottom: 1px solid rgba(59, 130, 246, 0.1);
     cursor: move;
+}
+
+@media (max-width: 768px) {
+    .sr-header {
+        padding: 18px 20px;
+    }
+}
+
+@media (max-width: 480px) {
+    .sr-header {
+        padding: 14px 16px;
+    }
 }
 
 .sr-header.dragging {
@@ -562,50 +804,62 @@ const setCancelled = (completed: number, total: number) => {
 .sr-title-container {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 10px;
     pointer-events: none;
 }
 
 .sr-title-icon-wrapper {
     background: rgba(59, 130, 246, 0.2);
-    padding: 10px;
-    border-radius: 12px;
+    padding: 6px;
+    border-radius: 8px;
     color: #3b82f6;
+}
+
+@media (max-width: 480px) {
+    .sr-title-icon-wrapper {
+        display: none;
+    }
 }
 
 .sr-title-text {
     color: white;
     font-weight: 700;
-    font-size: 16px;
+    font-size: 14px;
     letter-spacing: -0.025em;
     line-height: 1.25;
     margin: 0;
 }
 
+@media (max-width: 480px) {
+    .sr-title-text {
+        font-size: 14px;
+    }
+}
+
 .sr-title-subtext {
-    font-size: 10px;
+    font-size: 9px;
     color: rgba(59, 130, 246, 0.7);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.15em;
-    margin-top: 2px;
+    margin-top: 1px;
     margin-bottom: 0;
 }
 
 .sr-header-actions {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
 }
 
 .sr-counter-badge {
     background: rgba(59, 130, 246, 0.1);
-    padding: 6px 14px;
+    padding: 4px 10px;
     border-radius: 9999px;
     border: 1px solid rgba(59, 130, 246, 0.2);
     color: #3b82f6;
     font-weight: 700;
-    font-size: 12px;
+    font-size: 11px;
     font-variant-numeric: tabular-nums;
 }
 
@@ -625,13 +879,70 @@ const setCancelled = (completed: number, total: number) => {
     color: white;
 }
 
+/* Loading and Warning Banners */
+.sr-loading-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: linear-gradient(90deg, rgba(59, 130, 246, 0.1), rgba(96, 165, 250, 0.1));
+    border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.sr-loading-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(96, 165, 250, 0.3);
+    border-top-color: #60a5fa;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.sr-warning-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: linear-gradient(90deg, rgba(251, 191, 36, 0.15), rgba(252, 211, 77, 0.1));
+    border-bottom: 1px solid rgba(251, 191, 36, 0.3);
+    color: #fbbf24;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+.sr-warning-banner svg {
+    flex-shrink: 0;
+}
+
 .sr-toolbar {
-    padding: 16px 24px;
+    padding: 10px 14px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     background: rgba(255, 255, 255, 0.02);
     border-bottom: 1px solid rgba(59, 130, 246, 0.1);
+}
+
+@media (max-width: 768px) {
+    .sr-toolbar {
+        padding: 12px 18px;
+    }
+}
+
+@media (max-width: 480px) {
+    .sr-toolbar {
+        padding: 10px 14px;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
 }
 
 .sr-toolbar-group {
@@ -727,6 +1038,18 @@ const setCancelled = (completed: number, total: number) => {
     overflow-y: auto;
 }
 
+@media (max-width: 768px) {
+    .sr-event-list {
+        max-height: 280px;
+    }
+}
+
+@media (max-width: 480px) {
+    .sr-event-list {
+        max-height: 240px;
+    }
+}
+
 .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
 }
@@ -744,10 +1067,24 @@ const setCancelled = (completed: number, total: number) => {
 .sr-event-row {
     display: flex;
     align-items: center;
-    gap: 16px;
-    padding: 16px 24px;
+    gap: 12px;
+    padding: 10px 14px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.04);
     transition: background-color 0.2s;
+}
+
+@media (max-width: 768px) {
+    .sr-event-row {
+        gap: 12px;
+        padding: 12px 18px;
+    }
+}
+
+@media (max-width: 480px) {
+    .sr-event-row {
+        gap: 10px;
+        padding: 10px 14px;
+    }
 }
 
 .sr-event-row:hover {
@@ -757,6 +1094,27 @@ const setCancelled = (completed: number, total: number) => {
 .sr-event-row.skipped {
     opacity: 0.5;
     filter: grayscale(100%);
+}
+
+.sr-event-row.sr-event-countdown {
+    background: rgba(59, 130, 246, 0.08);
+    border-left: 3px solid #3b82f6;
+    animation: sr-row-countdown-glow 2s ease-in-out infinite;
+}
+
+.sr-event-row.sr-event-active {
+    background: rgba(59, 130, 246, 0.12);
+    border-left: 3px solid #60a5fa;
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.2);
+}
+
+@keyframes sr-row-countdown-glow {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.1);
+    }
+    50% {
+        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+    }
 }
 
 .sr-event-status-icon {
@@ -784,10 +1142,74 @@ const setCancelled = (completed: number, total: number) => {
     opacity: 1;
 }
 
-.sr-event-status-countdown { text-align: center; font-size: 10px; font-weight: 700; color: #3b82f6; }
+.sr-event-status-countdown {
+    text-align: center;
+    font-size: 11px;
+    font-weight: 800;
+    color: #3b82f6;
+    animation: sr-countdown-pulse 1s ease-in-out infinite;
+}
+
+/* Interactive countdown with hover play button */
+.sr-countdown-interactive {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.sr-countdown-interactive:hover {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: rgba(59, 130, 246, 0.5);
+    transform: scale(1.05);
+}
+
+.sr-countdown-number {
+    font-size: 11px;
+    font-weight: 800;
+    color: #3b82f6;
+    position: relative;
+    z-index: 1;
+    transition: opacity 0.2s;
+}
+
+.sr-countdown-play-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(59, 130, 246, 0.9);
+    border-radius: 9999px;
+    opacity: 0;
+    transition: opacity 0.2s;
+    color: white;
+}
+
+.sr-countdown-interactive:hover .sr-countdown-number {
+    opacity: 0;
+}
+
+.sr-countdown-interactive:hover .sr-countdown-play-overlay {
+    opacity: 1;
+}
+
+.sr-countdown-interactive:active {
+    transform: scale(0.95);
+}
+
 .sr-event-status-done { font-size: 12px; font-weight: 700; color: #34d399; }
 .sr-event-status-error { font-size: 12px; font-weight: 700; color: #ef4444; }
 .sr-event-status-active { font-size: 12px; font-weight: 700; color: #3b82f6; animation: sr-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+
+@keyframes sr-countdown-pulse {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.1);
+        opacity: 0.8;
+    }
+}
 
 .sr-event-content {
     flex: 1;
@@ -837,6 +1259,37 @@ const setCancelled = (completed: number, total: number) => {
     margin: 0;
 }
 
+.sr-event-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 6px 10px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 6px;
+    font-size: 11px;
+    color: #f87171;
+    line-height: 1.4;
+}
+
+.sr-event-error svg {
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.sr-event-error span {
+    flex: 1;
+    word-break: break-word;
+}
+
+@media (max-width: 480px) {
+    .sr-event-error {
+        font-size: 10px;
+        padding: 4px 8px;
+    }
+}
+
 .sr-event-actions {
     display: flex;
     align-items: center;
@@ -848,6 +1301,18 @@ const setCancelled = (completed: number, total: number) => {
 
 .sr-event-row:hover .sr-event-actions {
     opacity: 1;
+}
+
+@media (max-width: 480px) {
+    .sr-event-actions {
+        opacity: 0.5;
+        gap: 4px;
+    }
+
+    .sr-row-action-btn {
+        width: 28px;
+        height: 28px;
+    }
 }
 
 .sr-row-action-btn {
@@ -869,6 +1334,16 @@ const setCancelled = (completed: number, total: number) => {
     background: rgba(59, 130, 246, 0.1);
 }
 
+.sr-row-action-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.sr-row-action-btn:disabled:hover {
+    color: #94a3b8;
+    background: rgba(30, 41, 59, 0.5);
+}
+
 .sr-row-action-btn.danger {
     background: rgba(239, 68, 68, 0.1);
     color: rgba(248, 113, 113, 0.7);
@@ -879,12 +1354,37 @@ const setCancelled = (completed: number, total: number) => {
     background: rgba(239, 68, 68, 0.2);
 }
 
+.sr-row-action-btn.sr-pause-btn {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.sr-row-action-btn.sr-pause-btn:hover {
+    background: rgba(59, 130, 246, 0.25);
+    color: #3b82f6;
+}
+
 .sr-footer {
-    padding: 24px;
+    padding: 12px 14px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 10px;
     background: rgba(255, 255, 255, 0.01);
+}
+
+@media (max-width: 768px) {
+    .sr-footer {
+        padding: 18px;
+        gap: 12px;
+    }
+}
+
+@media (max-width: 480px) {
+    .sr-footer {
+        padding: 14px;
+        gap: 10px;
+    }
 }
 
 .sr-primary-btn {
@@ -892,12 +1392,12 @@ const setCancelled = (completed: number, total: number) => {
     background: #3b82f6;
     color: white;
     font-weight: 700;
-    padding: 16px;
-    border-radius: 12px;
+    padding: 10px;
+    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 12px;
+    gap: 8px;
     border: none;
     cursor: pointer;
     box-shadow: 0 0 25px rgba(59, 130, 246, 0.35);
@@ -918,8 +1418,18 @@ const setCancelled = (completed: number, total: number) => {
 }
 
 .sr-primary-btn span {
-    font-size: 14px;
+    font-size: 13px;
     letter-spacing: 0.025em;
+}
+
+@media (max-width: 480px) {
+    .sr-primary-btn {
+        padding: 12px;
+    }
+
+    .sr-primary-btn span {
+        font-size: 13px;
+    }
 }
 
 .sr-secondary-btn {
@@ -928,12 +1438,12 @@ const setCancelled = (completed: number, total: number) => {
     color: #3b82f6;
     border: 1px solid rgba(59, 130, 246, 0.3);
     font-weight: 700;
-    padding: 16px;
-    border-radius: 12px;
+    padding: 10px;
+    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 12px;
+    gap: 8px;
     cursor: pointer;
     transition: all 0.2s;
 }
@@ -943,6 +1453,31 @@ const setCancelled = (completed: number, total: number) => {
 }
 
 .sr-secondary-btn:active {
+    transform: scale(0.98);
+}
+
+.sr-toggle-issues-btn {
+    width: 100%;
+    background: rgba(250, 56, 62, 0.2);
+    color: #fa383e;
+    border: 1px solid rgba(250, 56, 62, 0.3);
+    font-weight: 600;
+    padding: 8px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 12px;
+}
+
+.sr-toggle-issues-btn:hover {
+    background: rgba(250, 56, 62, 0.3);
+}
+
+.sr-toggle-issues-btn:active {
     transform: scale(0.98);
 }
 

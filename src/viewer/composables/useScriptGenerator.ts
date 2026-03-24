@@ -112,6 +112,83 @@ export function generateLLMContext(data: any): string {
         return closest;
     };
 
+    // ── Source Resolution Helpers ──
+    interface SourceLocation {
+        file?: string;
+        line?: number;
+        column?: number;
+        functionName?: string;
+        resolved: boolean;
+        method: 'sourcemap' | 'bundler_comment' | 'raw';
+    }
+
+    const parseStackFrame = (frame: any): SourceLocation | null => {
+        if (!frame) return null;
+
+        // CDP stack frame format
+        if (frame.url && frame.lineNumber !== undefined) {
+            return {
+                file: frame.url,
+                line: frame.lineNumber,
+                column: frame.columnNumber,
+                functionName: frame.functionName || undefined,
+                resolved: false,
+                method: 'raw'
+            };
+        }
+
+        // String format: "at functionName (url:line:col)" or "url:line:col"
+        if (typeof frame === 'string') {
+            const match = frame.match(/(?:at\s+([^\s]+)\s+\()?([^:]+):(\d+):(\d+)\)?/);
+            if (match) {
+                return {
+                    functionName: match[1] || undefined,
+                    file: match[2],
+                    line: parseInt(match[3], 10),
+                    column: parseInt(match[4], 10),
+                    resolved: false,
+                    method: 'raw'
+                };
+            }
+        }
+
+        return null;
+    };
+
+    const formatSourceLocation = (loc: SourceLocation): string => {
+        if (!loc.file) return 'unknown';
+
+        const fileName = loc.file.split('/').pop() || loc.file;
+        const position = loc.line !== undefined ? `:${loc.line}` : '';
+        const func = loc.functionName ? ` (${loc.functionName})` : '';
+
+        return `${fileName}${position}${func}`;
+    };
+
+    const parseInitiator = (initiator: any): SourceLocation | null => {
+        if (!initiator) return null;
+
+        // CDP initiator format
+        if (initiator.type === 'script' && initiator.stack) {
+            const topFrame = initiator.stack.callFrames?.[0];
+            if (topFrame) {
+                return parseStackFrame(topFrame);
+            }
+        }
+
+        if (initiator.url && initiator.lineNumber !== undefined) {
+            return {
+                file: initiator.url,
+                line: initiator.lineNumber,
+                column: initiator.columnNumber,
+                resolved: false,
+                method: 'raw'
+            };
+        }
+
+        return null;
+    };
+
     // ── Pre-classify bug type ──
     const errorLogs = consoleErrors.filter((l: any) => l.level === 'error');
     const failedRequests = entries.filter((r: any) => r.response && (r.response.status >= 400 || r.response.status === 0));
@@ -172,9 +249,121 @@ export function generateLLMContext(data: any): string {
     if (env.language) md += `- **Language:** ${env.language}\n`;
     md += '\n';
 
+    // Source Resolution Status
+    md += `## Source Resolution\n\n`;
+    md += `**Error locations and network initiators** are extracted from stack traces and Chrome DevTools Protocol data.\n\n`;
+
+    // Check if we have bundled/minified scripts
+    const hasBundledScripts = consoleErrors.some((e: any) => {
+        const url = e.url || e.stackTrace?.callFrames?.[0]?.url || '';
+        return url.includes('.min.') || url.includes('bundle');
+    });
+
+    if (hasBundledScripts) {
+        md += `⚠️ **Note:** The website uses bundled/minified JavaScript. Error locations and initiators shown below refer to:\n`;
+        md += `- **Bundled code positions** (e.g., \`bundle.js:142:18\`) - not the original source\n`;
+        md += `- **Original source locations** may differ significantly\n`;
+        md += `- If the site provides **sourcemaps**, they would resolve to actual source files (e.g., \`src/api/client.ts:45\`)\n`;
+        md += `- Without sourcemaps, treat file/line references as **approximate indicators** of which bundle contains the error\n\n`;
+    } else {
+        md += `✓ The website appears to use non-minified scripts. File and line numbers should be accurate.\n\n`;
+    }
+
     // Bug classification
     md += `## Bug Classification (pre-analyzed)\n\n`;
     md += '```json\n' + JSON.stringify(classification, null, 2) + '\n```\n\n';
+
+    // User-reported issues (PRIORITY - show these first!)
+    if (issues.length > 0) {
+        md += `## ⚠️ User-Reported Issues\n\n`;
+        md += `**IMPORTANT:** The user explicitly reported ${issues.length} issue${issues.length > 1 ? 's' : ''} during this session.\n`;
+        md += `These issues include exact DOM element identification, screenshots, and state descriptions.\n\n`;
+
+        issues.forEach((issue: any, idx: number) => {
+            const time = new Date(issue.timestamp).toLocaleTimeString();
+            const actionIdx = findClosestActionIndex(issue.timestamp);
+
+            md += `### Issue #${idx + 1} - [${time}] (after step ${actionIdx})\n\n`;
+
+            // Current vs Expected State
+            if (issue.currentState || issue.desiredState) {
+                md += `**Problem Description:**\n`;
+                if (issue.currentState) {
+                    md += `- **Current State:** ${issue.currentState}\n`;
+                }
+                if (issue.desiredState) {
+                    md += `- **Expected State:** ${issue.desiredState}\n`;
+                }
+                md += '\n';
+            }
+
+            // Additional notes
+            if (issue.comment) {
+                md += `**Additional Notes:** ${issue.comment}\n\n`;
+            }
+
+            // Legacy format fallback
+            if (!issue.currentState && !issue.desiredState && (issue.description || issue.text || issue.message)) {
+                md += `**Comment:** ${issue.description || issue.text || issue.message}\n\n`;
+            }
+
+            // Resolved DOM Elements
+            if (issue.primaryElement) {
+                md += `**Identified DOM Element:**\n`;
+                md += '```html\n';
+                md += `<!-- Primary element (confidence: ${issue.primaryElement.score.toFixed(1)}) -->\n`;
+                md += `<${issue.primaryElement.tagName}`;
+
+                // Add data attributes
+                const dataAttrs = issue.primaryElement.dataAttributes || {};
+                Object.entries(dataAttrs).forEach(([key, val]) => {
+                    md += ` ${key}="${val}"`;
+                });
+                md += '>\n';
+
+                if (issue.primaryElement.textContent) {
+                    md += `  ${truncate(issue.primaryElement.textContent, 100)}\n`;
+                }
+                md += `</${issue.primaryElement.tagName}>\n`;
+                md += '```\n\n';
+
+                md += `**Selector:** \`${issue.primaryElement.selector}\`\n`;
+                md += `**Position:** x=${issue.primaryElement.boundingBox?.x}, y=${issue.primaryElement.boundingBox?.y}, `;
+                md += `${issue.primaryElement.boundingBox?.width}×${issue.primaryElement.boundingBox?.height}px\n\n`;
+            }
+
+            // Additional elements
+            if (issue.resolvedElements && issue.resolvedElements.length > 1) {
+                md += `**Additional Elements Identified (${issue.resolvedElements.length - 1}):**\n`;
+                issue.resolvedElements.slice(1, 4).forEach((el: any) => {
+                    md += `- \`<${el.tagName}>\` - ${el.selector} (score: ${el.score.toFixed(1)})\n`;
+                });
+                if (issue.resolvedElements.length > 4) {
+                    md += `- ... and ${issue.resolvedElements.length - 4} more\n`;
+                }
+                md += '\n';
+            }
+
+            // Selected text
+            if (issue.selectedText) {
+                md += `**User Selected Text:** "${issue.selectedText}"\n\n`;
+            }
+
+            // Screenshot reference
+            if (issue.rect) {
+                md += `**Screenshot Area:** Highlighted region at (${Math.round(issue.rect.x)}, ${Math.round(issue.rect.y)}), `;
+                md += `${Math.round(issue.rect.width)}×${Math.round(issue.rect.height)}px\n`;
+                md += `*Screenshot included in screencast frames near timestamp ${issue.timestamp}*\n\n`;
+            }
+
+            // URL context
+            if (issue.url) {
+                md += `**Page URL:** ${issue.url}\n\n`;
+            }
+
+            md += '---\n\n';
+        });
+    }
 
     // Reproduction steps
     md += `## Reproduction Steps\n\n`;
@@ -190,100 +379,130 @@ export function generateLLMContext(data: any): string {
             else md += `${i}. [${time}] **${e.type}**\n`;
         });
     } else md += '(No user actions recorded)\n';
-
-    // User-reported issues
-    if (issues.length > 0) {
-        md += '\n### User-Reported Issues\n\n';
-        for (const issue of issues) {
-            const time = new Date(issue.timestamp).toLocaleTimeString();
-            const actionIdx = findClosestActionIndex(issue.timestamp);
-            md += `- [${time}] (after step ${actionIdx}) "${issue.comment || 'No comment'}"\n`;
-        }
-    }
     md += '\n';
 
-    // Console events with full traces
+    // Console events with full traces (same-domain only)
     md += `## Console Events (errors & warnings, with stack traces)\n\n`;
+    const getLogUrl = (e: any) => e.url || e.stackTrace?.callFrames?.[0]?.url || '';
+
     const relevantLogs = consoleErrors.filter((l: any) => {
         if (l.level !== 'error' && l.level !== 'warning') return false;
         const txt = l.text || l.message || '';
+
+        // Filter out network errors that are blocked/aborted
         if (txt.includes('net::ERR_ABORTED') || txt.includes('net::ERR_BLOCKED_BY_CLIENT')) return false;
+
+        // Filter logs by domain - only keep same-site logs
+        const u = getLogUrl(l);
+        if (u && !isSameSite(u)) return false; // 3rd party domain, exclude
+
+        // For logs without URL, check if text contains 3rd party URLs
+        if (!u && txt) {
+            const match = txt.match(/https?:\/\/[^\s'"]+/);
+            if (match && !isSameSite(match[0])) return false; // 3rd party URL in message, exclude
+        }
+
         return true;
     });
-    
+
     if (relevantLogs.length > 0) {
-        const getLogUrl = (e: any) => e.url || e.stackTrace?.callFrames?.[0]?.url || '';
-        const sameSiteLogs = relevantLogs.filter((l: any) => {
-            const u = getLogUrl(l);
-            // Treat empty URL as 1st party. If it's a security/CSP violation, try to infer from the text.
-            if (!u && l.text) {
-                // simple heuristic for CSP errors containing urls
-                const match = l.text.match(/https?:\/\/[^\s']+/);
-                if (match && !isSameSite(match[0])) return false;
-            }
-            return !u || isSameSite(u);
-        });
-
-
-        if (sameSiteLogs.length > 0) {
-            md += `### Same-domain logs (${sameSiteLogs.length})\n\n`;
-            for (const e of sameSiteLogs) {
+        md += `### Application errors (${relevantLogs.length})\n\n`;
+        for (const e of relevantLogs) {
                 const ts = e.timestamp || 0;
                 const actionIdx = findClosestActionIndex(ts);
                 const source = e.source || (e.stackTrace?.callFrames?.[0]?.url ? 'script' : 'runtime');
-                const initiator = e.stackTrace?.callFrames?.[0] ? `${e.stackTrace.callFrames[0].url}:${e.stackTrace.callFrames[0].lineNumber}` : '';
+
+                // Parse error location from stack trace
+                let errorLocation: SourceLocation | null = null;
+                if (e.stackTrace?.callFrames?.[0]) {
+                    errorLocation = parseStackFrame(e.stackTrace.callFrames[0]);
+                }
 
                 md += `#### [${(e.level || 'ERROR').toUpperCase()}] ${truncate(e.text || e.message || '', 200)}\n`;
                 md += `- **Source:** ${source}\n`;
                 md += `- **Timestamp:** ${ts ? new Date(ts).toLocaleTimeString() : 'unknown'}\n`;
                 md += `- **After action:** step ${actionIdx}\n`;
                 if (e.url) md += `- **URL:** ${e.url}\n`;
-                if (initiator) md += `- **Initiator:** \`${initiator}\`\n`;
+
+                // Add resolved error location
+                if (errorLocation) {
+                    const fileName = errorLocation.file ? errorLocation.file.split('/').pop() : 'unknown';
+                    const loc = errorLocation.line !== undefined
+                        ? `${fileName}:${errorLocation.line}:${errorLocation.column || 0}`
+                        : fileName;
+
+                    // Make function name prominent
+                    if (errorLocation.functionName) {
+                        md += `- **Error in function:** \`${errorLocation.functionName}()\` at \`${loc}\`\n`;
+                    } else {
+                        md += `- **Error location:** \`${loc}\`\n`;
+                    }
+
+                    // Note if using bundled code
+                    if (errorLocation.file && (errorLocation.file.includes('.min.') || errorLocation.file.includes('bundle'))) {
+                        md += `- **Note:** Error in bundled/minified script. Original source location may differ if sourcemaps are available.\n`;
+                    }
+                }
 
                 if (e.stackTrace?.callFrames?.length) {
-                    md += '```\n';
-                    e.stackTrace.callFrames.slice(0, 8).forEach((f: any) => {
-                        md += `  at ${f.functionName || '(anonymous)'} (${f.url}:${f.lineNumber}:${f.columnNumber || 0})\n`;
+                    md += '- **Stack trace:**\n```\n';
+                    e.stackTrace.callFrames.slice(0, 8).forEach((f: any, idx: number) => {
+                        const funcName = f.functionName || '(anonymous)';
+                        const fileName = f.url ? f.url.split('/').pop() : 'unknown';
+                        const location = `${fileName}:${f.lineNumber}:${f.columnNumber || 0}`;
+
+                        // Show function name prominently with location
+                        if (idx === 0) {
+                            md += `  → ${funcName}() at ${location}\n`;
+                        } else {
+                            md += `    at ${funcName}() [${location}]\n`;
+                        }
                     });
                     md += '```\n';
                 }
                 md += '\n';
             }
-        } else md += '(No relevant same-domain console errors)\n\n';
-    } else md += '(No console errors or warnings)\n\n';
+    } else {
+        md += '(No console errors or warnings)\n\n';
+    }
 
-    // Network failures with request/response bodies
-    md += `## Network Failures (with request/response bodies)\n\n`;
+    // Network failures (summary only, no bodies)
+    md += `## Network Failures\n\n`;
 
     if (failedRequests.length > 0) {
         md += `### Failed Requests (${failedRequests.length})\n\n`;
         for (const r of failedRequests) {
-                const reqTs = r.startedDateTime ? new Date(r.startedDateTime).getTime() : 0;
-                const actionIdx = findClosestActionIndex(reqTs);
-                md += `#### ${r.response?.status} ${r.request?.method || 'GET'} \`${r.request?.url}\`\n`;
-                md += `- **After action:** step ${actionIdx}\n`;
-                md += `- **Duration:** ${r.time ? Math.round(r.time) + 'ms' : 'unknown'}\n`;
+            const reqTs = r.startedDateTime ? new Date(r.startedDateTime).getTime() : 0;
+            const actionIdx = findClosestActionIndex(reqTs);
+            md += `- **${r.response?.status}** ${r.request?.method || 'GET'} \`${r.request?.url}\`\n`;
+            md += `  - After step ${actionIdx}, took ${r.time ? Math.round(r.time) + 'ms' : '?'}\n`;
 
-                // Request headers (interesting ones)
-                const interestingHeaders = ['content-type', 'authorization', 'accept', 'x-requested-with', 'origin', 'referer'];
-                const reqHeaders = (r.request?.headers || []).filter((h: any) => interestingHeaders.includes(h.name.toLowerCase()));
-                if (reqHeaders.length > 0) {
-                    md += '- **Request headers:**\n';
-                    reqHeaders.forEach((h: any) => { md += `  - \`${h.name}: ${truncate(h.value, 100)}\`\n`; });
-                }
+            // Parse and display initiator
+            const initiatorLoc = parseInitiator(r._initiator);
+            if (initiatorLoc) {
+                const fileName = initiatorLoc.file ? initiatorLoc.file.split('/').pop() : 'unknown';
+                const loc = initiatorLoc.line !== undefined
+                    ? `${fileName}:${initiatorLoc.line}:${initiatorLoc.column || 0}`
+                    : fileName;
+                const func = initiatorLoc.functionName ? ` in ${initiatorLoc.functionName}()` : '';
+                md += `  - Initiated by: \`${loc}\`${func}\n`;
 
-                // Request body
-                if (r.request?.postData?.text) {
-                    md += `- **Request body:**\n\`\`\`\n${truncate(r.request.postData.text, 2048)}\n\`\`\`\n`;
+                // Note if using bundled code
+                if (initiatorLoc.file && (initiatorLoc.file.includes('.min.') || initiatorLoc.file.includes('bundle'))) {
+                    md += `  - Note: Initiator in bundled/minified script\n`;
                 }
-
-                // Response body
-                if (r.response?.content?.text) {
-                    md += `- **Response body:**\n\`\`\`\n${truncate(r.response.content.text, 2048)}\n\`\`\`\n`;
-                }
-                md += '\n';
             }
-    } else md += '(No failed requests)\n\n';
+
+            // Only include content-type if present
+            const contentType = (r.request?.headers || []).find((h: any) => h.name.toLowerCase() === 'content-type');
+            if (contentType) {
+                md += `  - Content-Type: ${contentType.value}\n`;
+            }
+            md += '\n';
+        }
+    } else {
+        md += '(No failed requests)\n\n';
+    }
 
     md += '\n';
     return md;

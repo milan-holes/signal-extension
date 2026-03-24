@@ -116,9 +116,15 @@ export function generateReport(data: TabData, settings: Settings): Report {
         }
     };
 
+    const generatedAt = new Date().toISOString();
+    const environment = data.environment ? { ...data.environment } : {};
+
+    // Always add generatedAt to environment
+    environment.generatedAt = generatedAt;
+
     return {
-        generatedAt: new Date().toISOString(),
-        environment: data.environment || ({} as Record<string, never>),
+        generatedAt,
+        environment,
         storage: cleanStorage,
         consoleErrors: data.logs,
         userEvents: data.userEvents || [],

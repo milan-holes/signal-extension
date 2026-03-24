@@ -18,20 +18,58 @@ describe('EnvironmentTab.vue', () => {
         expect(wrapper.text()).toContain('Chrome');
     });
 
-    it('can toggle comparison mode', async () => {
+    it('always shows comparison headers for browser/display/hardware cards', () => {
         const environment = { userAgent: 'Chrome120', url: 'http://test' };
         const wrapper = mount(EnvironmentTab, { props: { environment } });
 
-        // Not comparing initially
-        expect(wrapper.find('.compare-header').exists()).toBe(false);
-
-        const checkbox = wrapper.find('input[type="checkbox"]');
-        await checkbox.setValue(true);
-
-        // Should see comparison header
+        // Comparison is always on — no toggle checkbox
+        expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false);
         expect(wrapper.find('.compare-header').exists()).toBe(true);
-        // Should see the text "Recorded" and "Current (You)"
         expect(wrapper.text()).toContain('Recorded');
         expect(wrapper.text()).toContain('Current (You)');
+    });
+
+    it('displays Info card with creation date, url, and timezone merged', () => {
+        const environment = {
+            userAgent: 'Chrome',
+            platform: 'Win32',
+            generatedAt: '2024-03-15T10:30:45.000Z',
+            url: 'https://example.com',
+            timezone: 'America/New_York',
+        };
+        const wrapper = mount(EnvironmentTab, { props: { environment } });
+
+        expect(wrapper.text()).toContain('Info');
+        expect(wrapper.text()).toContain('Created At');
+        expect(wrapper.text()).toContain('URL');
+        expect(wrapper.text()).toContain('Timezone');
+        // Date is formatted
+        expect(wrapper.text()).toContain('Mar');
+        expect(wrapper.text()).toContain('2024');
+        // Old separate cards are gone
+        expect(wrapper.text()).not.toContain('Recording Info');
+        expect(wrapper.text()).not.toContain('Page');
+    });
+
+    it('does not show Info card when no info fields are present', () => {
+        const environment = { userAgent: 'Chrome', platform: 'Win32' };
+        const wrapper = mount(EnvironmentTab, { props: { environment } });
+
+        expect(wrapper.text()).not.toContain('Created At');
+    });
+
+    it('Info card does not show comparison columns', () => {
+        const environment = {
+            userAgent: 'Chrome',
+            generatedAt: '2024-03-15T10:30:45.000Z',
+            url: 'https://example.com',
+        };
+        const wrapper = mount(EnvironmentTab, { props: { environment } });
+
+        // The Info card (.env-card:first-child) should have no compare-header
+        const cards = wrapper.findAll('.env-card');
+        const infoCard = cards[0];
+        expect(infoCard.find('.compare-header').exists()).toBe(false);
+        expect(infoCard.find('.env-values').exists()).toBe(false);
     });
 });

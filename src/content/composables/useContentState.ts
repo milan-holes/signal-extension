@@ -2,8 +2,14 @@ import { reactive } from 'vue';
 
 export interface Toast {
     id: number;
-    type: 'console' | 'network';
+    type: 'console' | 'network' | 'info';
     message: string;
+}
+
+export interface Issue {
+    timestamp: number;
+    comment: string;
+    rect: { x: number; y: number; width: number; height: number };
 }
 
 let toastIdCounter = 0;
@@ -20,9 +26,10 @@ export const contentState = reactive({
     bufferMinutes: 2,
     isReplaying: false,
     toasts: [] as Toast[],
+    issues: [] as Issue[],
 });
 
-export function addToast(type: 'console' | 'network', message: string) {
+export function addToast(type: 'console' | 'network' | 'info', message: string) {
     const id = ++toastIdCounter;
     contentState.toasts.push({ id, type, message });
 
@@ -66,4 +73,12 @@ export function setMinimized(minimized: boolean) {
 
 export function setReplayingState(isReplaying: boolean) {
     contentState.isReplaying = isReplaying;
+}
+
+export function addIssue(issue: Issue) {
+    contentState.issues.push(issue);
+}
+
+export function clearIssues() {
+    contentState.issues = [];
 }

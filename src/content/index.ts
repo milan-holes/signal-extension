@@ -3,11 +3,12 @@ import Widget from './components/Widget.vue';
 import IssueDialog from './components/IssueDialog.vue';
 import ReplayWidget from './components/ReplayWidget.vue';
 import ErrorToast from './components/ErrorToast.vue';
+import IssueOverlay from './components/IssueOverlay.vue';
 
 import { useRecording } from './composables/useRecording';
 import { useScreenshot } from './composables/useScreenshot';
 import { useEventTracking } from './composables/useEventTracking';
-import { contentState, setRecordingState, setWidgetVisibility, setMinimized, setReplayingState, addToast } from './composables/useContentState';
+import { contentState, setRecordingState, setWidgetVisibility, setMinimized, setReplayingState, addToast, addIssue, clearIssues } from './composables/useContentState';
 
 // Composables instance
 const recordingControls = useRecording();
@@ -95,13 +96,36 @@ function initSignalContext() {
 
   // Issue Dialog setup
   const issueApp = createApp(IssueDialog, {
-    onSubmit: (data: { comment: string, rect: any }) => {
+    onSubmit: (data: {
+      currentState: string;
+      desiredState: string;
+      comment: string;
+      rect: any;
+      resolvedElements: any[];
+      primaryElement: any;
+      selectedText: string | null;
+    }) => {
+      const issue = {
+        timestamp: Date.now(),
+        currentState: data.currentState,
+        desiredState: data.desiredState,
+        comment: data.comment,
+        rect: data.rect,
+        resolvedElements: data.resolvedElements,
+        primaryElement: data.primaryElement,
+        selectedText: data.selectedText
+      };
+
+      // Add to local state for immediate display
+      addIssue(issue);
+      updateRecordingIssueOverlay();
+
+      // Send to background
       chrome.runtime.sendMessage({
         action: "recordIssue",
         issue: {
-          timestamp: Date.now(),
-          comment: data.comment,
-          rect: data.rect
+          ...issue,
+          url: window.location.href
         }
       });
       chrome.runtime.sendMessage({ action: "resume" });
@@ -116,6 +140,64 @@ function initSignalContext() {
   const issueNode = document.createElement('div');
   dialogBox.appendChild(issueNode);
   const issueInstance = issueApp.mount(issueNode) as any;
+
+  // Issue Overlay Component Mount (for showing issue markers on page)
+  // IMPORTANT: Use shadow DOM so styles work correctly, but position on document.body
+  let issueOverlayInstance: any = null;
+  let recordingIssueOverlayInstance: any = null;
+  const issueOverlayHost = document.createElement('div');
+  issueOverlayHost.id = 'signal-issue-overlay-host';
+  issueOverlayHost.style.position = 'absolute';
+  issueOverlayHost.style.top = '0';
+  issueOverlayHost.style.left = '0';
+  issueOverlayHost.style.width = '100%';
+  issueOverlayHost.style.minHeight = '100vh';
+  issueOverlayHost.style.pointerEvents = 'none';
+  issueOverlayHost.style.zIndex = '2147483644';
+  document.body.appendChild(issueOverlayHost);
+
+  const issueOverlayShadow = issueOverlayHost.attachShadow({ mode: 'open' });
+
+  // Add CSS to shadow root
+  const issueOverlayStyle = document.createElement('style');
+  issueOverlayStyle.textContent = `* { box-sizing: border-box; }`;
+  issueOverlayShadow.appendChild(issueOverlayStyle);
+
+  // Load component styles
+  chrome.runtime.sendMessage({ action: 'getCss' }, (response) => {
+    if (response && response.css) {
+      const componentStyle = document.createElement('style');
+      componentStyle.textContent = response.css;
+      issueOverlayShadow.appendChild(componentStyle);
+    }
+  });
+
+  const issueOverlayNode = document.createElement('div');
+  issueOverlayNode.id = 'signal-issue-overlay-container';
+  issueOverlayNode.style.width = '100%';
+  issueOverlayNode.style.height = '100%';
+  issueOverlayShadow.appendChild(issueOverlayNode);
+
+  // Function to mount/update issue overlay during recording
+  function updateRecordingIssueOverlay() {
+    if (recordingIssueOverlayInstance) {
+      recordingIssueOverlayInstance.unmount();
+      recordingIssueOverlayInstance = null;
+    }
+    while (issueOverlayNode.firstChild) {
+      issueOverlayNode.removeChild(issueOverlayNode.firstChild);
+    }
+
+    if (contentState.issues.length > 0) {
+      const overlayNode = document.createElement('div');
+      issueOverlayNode.appendChild(overlayNode);
+      recordingIssueOverlayInstance = createApp(IssueOverlay, {
+        issues: contentState.issues,
+        visible: true
+      });
+      recordingIssueOverlayInstance.mount(overlayNode);
+    }
+  }
 
   // ------------------------------------------------------------------
   // Drag implementation
@@ -265,6 +347,8 @@ function initSignalContext() {
   window.addEventListener('signal-stop-recording', () => {
     trackingControls.detachEventTracking();
     setRecordingState(false, false, 'idle'); // Stop
+    clearIssues();
+    updateRecordingIssueOverlay();
     chrome.runtime.sendMessage({ action: "stop" }, () => {
       chrome.runtime.sendMessage({ action: 'saveReport' }, (res) => {
         if (res && res.status === 'saved') {
@@ -277,6 +361,8 @@ function initSignalContext() {
   window.addEventListener('signal-cancel-recording', () => {
     trackingControls.detachEventTracking();
     setRecordingState(false, false, 'idle'); // Stop
+    clearIssues();
+    updateRecordingIssueOverlay();
     chrome.runtime.sendMessage({ action: "stop" });
   });
 
@@ -334,6 +420,8 @@ function initSignalContext() {
     const onUp = (e: MouseEvent) => {
       if (!isSelecting) return;
       isSelecting = false;
+
+      // Remove the overlay but KEEP the selection box visible
       overlay.remove();
 
       const currentX = e.clientX;
@@ -345,14 +433,18 @@ function initSignalContext() {
         height: Math.abs(currentY - startY)
       };
 
-      selectionBox.remove();
       document.body.style.cursor = "default";
 
       // Trigger the IssueDialog Vue component with this rect!
       chrome.runtime.sendMessage({ action: "pause" });
       setRecordingState(true, true, contentState.currentMode); // Pausing state
 
-      issueInstance.open(box);
+      // Pass cleanup function to issue dialog to remove selection box when done
+      const cleanup = () => {
+        selectionBox.remove();
+      };
+
+      issueInstance.open(box, cleanup);
     };
 
     overlay.addEventListener('mousedown', onDown);
@@ -377,11 +469,16 @@ function initSignalContext() {
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       if (request.action === "showOverlay") {
         setWidgetVisibility(true);
-        setRecordingState(false, false, request.mode);
+        setRecordingState(true, false, request.mode);
+        trackingControls.initEventTracking();
+        clearIssues(); // Clear issues from previous session
+        updateRecordingIssueOverlay();
       }
       if (request.action === "hideOverlay") {
         setRecordingState(false, false, 'idle');
         setWidgetVisibility(false);
+        clearIssues();
+        updateRecordingIssueOverlay();
       }
       if (request.action === "triggerScreenshot") {
         if (request.type === 'visible') screenshotControls.captureVisible();
@@ -411,32 +508,65 @@ function initSignalContext() {
           currentReplayApp.unmount();
           currentReplayApp = null;
         }
+        // Clear issue overlay node but keep container
+        while (issueOverlayNode.firstChild) {
+          issueOverlayNode.removeChild(issueOverlayNode.firstChild);
+        }
         dialogBox.innerHTML = '';
 
         // Mount dynamic ReplayWidget details
         const node = document.createElement('div');
         dialogBox.appendChild(node);
-        
+
         currentReplayApp = createApp(ReplayWidget, {
           events: request.events,
           tabId: request.tabId,
           readyMode: request.readyMode,
           defaultDelay: request.defaultDelay,
+          issues: request.issues || [],
           onClose: () => {
             if (currentReplayApp) {
                currentReplayApp.unmount();
                currentReplayApp = null;
             }
+            if (issueOverlayInstance) {
+              issueOverlayInstance.unmount();
+              issueOverlayInstance = null;
+            }
             node.remove();
+          },
+          onToggleIssues: (visible: boolean, filteredIssues: any[]) => {
+            // Toggle issue overlay visibility
+            if (visible && filteredIssues && filteredIssues.length > 0) {
+              if (issueOverlayInstance) {
+                issueOverlayInstance.unmount();
+              }
+              const overlayNode = document.createElement('div');
+              issueOverlayNode.appendChild(overlayNode);
+              issueOverlayInstance = createApp(IssueOverlay, {
+                issues: filteredIssues,
+                visible: true
+              });
+              issueOverlayInstance.mount(overlayNode);
+            } else {
+              if (issueOverlayInstance) {
+                issueOverlayInstance.unmount();
+                issueOverlayInstance = null;
+              }
+              while (issueOverlayNode.firstChild) {
+                issueOverlayNode.removeChild(issueOverlayNode.firstChild);
+              }
+            }
           }
         });
 
         const replayInstance = currentReplayApp.mount(node);
-        
+
         // Setup cleanup hook
         // @ts-ignore
-        replayInstance.$el.addEventListener('close', () => { 
+        replayInstance.$el.addEventListener('close', () => {
           if(currentReplayApp) { currentReplayApp.unmount(); currentReplayApp = null; }
+          if (issueOverlayInstance) { issueOverlayInstance.unmount(); issueOverlayInstance = null; }
           node.remove();
         });
         setReplayingState(true);
@@ -452,7 +582,7 @@ function initSignalContext() {
 
       if (request.action === "replayWidgetUpdate") {
         if ((window as any)._updateReplayWidgetEvent) {
-          (window as any)._updateReplayWidgetEvent(request.index, request.status, request.total);
+          (window as any)._updateReplayWidgetEvent(request.index, request.status, request.total, request.errorMessage);
         }
       }
       if (request.action === "replayWidgetFinished") {

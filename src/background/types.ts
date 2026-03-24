@@ -109,6 +109,7 @@ export interface EnvironmentData {
     deviceMemory: string | number;
     connectionType: string;
     url: string;
+    generatedAt?: string;
 }
 
 export interface StorageData {
@@ -137,8 +138,10 @@ export interface ReplayState {
     isCancelled: boolean;
     skipWait: boolean;
     skipFailed?: boolean;
+    skipCurrentEvent?: boolean;
     customDelay: number | null;
     events: UserEvent[];
+    issues?: Issue[];
     originalUrl: string;
     originalContext: unknown;
     originalAutoStart: boolean;

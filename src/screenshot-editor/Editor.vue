@@ -272,7 +272,7 @@ const downloadFinal = () => {
 
     chrome.runtime.sendMessage({
         action: "recordIssue",
-        issue: { timestamp: Date.now(), type: 'screenshot', comment: commentText.value, dataUrl: finalUrl }
+        issue: { timestamp: Date.now(), type: 'screenshot', comment: commentText.value, dataUrl: finalUrl, url: window.location.href }
     });
 };
 

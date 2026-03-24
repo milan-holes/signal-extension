@@ -81,8 +81,12 @@
         </div>
       </div>
       <div class="modal-footer">
-        <button class="action-btn" @click="$emit('close')">Cancel</button>
-        <button class="action-btn primary" @click="startReplay"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> Start Replay</button>
+        <button class="action-btn" @click="$emit('close')" :disabled="isInitiating">Cancel</button>
+        <button class="action-btn primary" @click="startReplay" :disabled="isInitiating">
+          <svg v-if="!isInitiating" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin"><path d="M12,4V2A10,10 0 0,0 2,12H4A8,8 0 0,1 12,4Z" fill="currentColor"/></svg>
+          {{ isInitiating ? 'Opening new tab...' : 'Start Replay' }}
+        </button>
       </div>
     </div>
   </div>
@@ -104,6 +108,7 @@ const defaultDelay = ref('auto');
 const clearLocal = ref(false);
 const clearCookies = ref(false);
 const clearIndexedDB = ref(false);
+const isInitiating = ref(false);
 
 const storageSections = reactive([
   { key: 'localStorage', title: 'Local Storage', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>', items: [] as { key: string; value: string }[], open: false },
@@ -134,6 +139,8 @@ function startReplay() {
   if (!replayUrl.value.trim()) { alert('URL is required'); return; }
   if (!props.reportData?.userEvents) return;
 
+  isInitiating.value = true;
+
   const events = [...props.reportData.userEvents].sort((a: any, b: any) => a.timestamp - b.timestamp);
 
   const gatherStorage = (items: { key: string; value: string }[]) => {
@@ -159,6 +166,7 @@ function startReplay() {
     events,
     autoStart: autoStart.value,
     defaultDelay: defaultDelay.value === 'auto' ? null : parseInt(defaultDelay.value),
+    issues: props.reportData?.issues || [],
     context: {
       clearLocalSession: clearLocal.value,
       clearCookies: clearCookies.value,
@@ -170,7 +178,11 @@ function startReplay() {
     },
   });
 
-  emit('close');
+  // Reset state after a short delay and close
+  setTimeout(() => {
+    isInitiating.value = false;
+    emit('close');
+  }, 500);
 }
 </script>
 
@@ -206,6 +218,16 @@ function startReplay() {
 
 .action-btn { background: transparent; border: 1px solid var(--border-color); color: var(--text-main); padding: 6px 12px; border-radius: 4px; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all 0.2s; font-family: inherit; }
 .action-btn:hover { background: var(--bg-hover); }
+.action-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .action-btn.primary { background: var(--primary); border-color: var(--primary); color: white; }
-.action-btn.primary:hover { background: var(--primary-hover); }
+.action-btn.primary:hover:not(:disabled) { background: var(--primary-hover); }
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 </style>

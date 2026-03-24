@@ -337,6 +337,15 @@ chrome.runtime.onMessage.addListener((request: any, sender: chrome.runtime.Messa
         const rawData = attachedTabs[tabId];
         if (rawData) {
             try {
+                // Notify user that report is being created
+                chrome.tabs.sendMessage(tabId, {
+                    action: 'showToast',
+                    toastType: 'info',
+                    message: 'Creating your recording report...'
+                }).catch(() => {
+                    // Ignore if content script is not available
+                });
+
                 const report = generateReport(rawData, settings);
                 chrome.storage.local.set({ viewerData: report }, () => {
                     if (chrome.runtime.lastError) {
@@ -550,8 +559,10 @@ chrome.runtime.onMessage.addListener((request: any, sender: chrome.runtime.Messa
                             isPaused: false,
                             isCancelled: false,
                             skipWait: false,
+                            skipCurrentEvent: false,
                             customDelay: defaultDelay,
                             events: replayable,
+                            issues: request.issues || [],
                             originalUrl: request.url,
                             originalContext: request.context || null,
                             originalAutoStart: autoStart,
@@ -566,7 +577,8 @@ chrome.runtime.onMessage.addListener((request: any, sender: chrome.runtime.Messa
                             events: replayable,
                             tabId,
                             readyMode: !autoStart,
-                            defaultDelay
+                            defaultDelay,
+                            issues: request.issues || []
                         });
 
                         if (autoStart) executeReplay(tabId, replayable);
@@ -599,6 +611,7 @@ chrome.runtime.onMessage.addListener((request: any, sender: chrome.runtime.Messa
         const context = state.originalContext;
         const autoStart = state.originalAutoStart || false;
         const defaultDelay = state.customDelay;
+        const issues = state.issues || [];
 
         replayState[tabId] = {
             isPaused: false,
@@ -606,6 +619,7 @@ chrome.runtime.onMessage.addListener((request: any, sender: chrome.runtime.Messa
             skipWait: false,
             customDelay: defaultDelay,
             events,
+            issues,
             originalUrl: url,
             originalContext: context,
             originalAutoStart: autoStart,
@@ -626,7 +640,8 @@ chrome.runtime.onMessage.addListener((request: any, sender: chrome.runtime.Messa
                 events,
                 tabId,
                 readyMode: !autoStart,
-                defaultDelay
+                defaultDelay,
+                issues
             });
             chrome.tabs.sendMessage(tabId, { action: 'setWidgetVisibility', visible: false });
             if (autoStart) executeReplay(tabId, events);
@@ -716,6 +731,16 @@ chrome.runtime.onMessage.addListener((request: any, sender: chrome.runtime.Messa
         return true;
     }
 
+    if (request.action === 'replaySkipEvent') {
+        const tabId = request.tabId;
+        if (replayState[tabId]) {
+            replayState[tabId].skipCurrentEvent = true;
+            replayState[tabId].skipWait = true; // Also skip the wait
+        }
+        sendResponse({ status: 'skipped' });
+        return true;
+    }
+
     if (request.action === 'replayCancel') {
         const tabId = request.tabId;
         if (replayState[tabId]) {
@@ -744,6 +769,7 @@ chrome.runtime.onMessage.addListener((request: any, sender: chrome.runtime.Messa
         const tabId = request.tabId;
         if (replayState[tabId]) delete replayState[tabId];
         chrome.tabs.sendMessage(tabId, { action: 'replayWidgetRemove' });
+        chrome.tabs.sendMessage(tabId, { action: 'setWidgetVisibility', visible: true });
         try { chrome.debugger.detach({ tabId }); } catch { }
         sendResponse({ status: 'closed' });
         return true;

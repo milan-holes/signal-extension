@@ -220,8 +220,49 @@ const detailHtml = computed(() => {
   } else if (event.source === 'issue') {
     html = `<div class="detail-section-title" style="color:var(--danger);">Reported Issue</div>`;
     html += detailRow('Time', formatTime(event.timestamp || event.sortTime));
+
+    // Current / Expected state
+    if (event.currentState || event.desiredState) {
+      if (event.currentState) {
+        html += `<div style="margin-top:10px;"><div class="detail-label">Current State</div><div class="code-snippet" style="border-left:3px solid var(--danger);">${esc(event.currentState)}</div></div>`;
+      }
+      if (event.desiredState) {
+        html += `<div style="margin-top:10px;"><div class="detail-label">Expected State</div><div class="code-snippet" style="border-left:3px solid var(--success, #4ade80);">${esc(event.desiredState)}</div></div>`;
+      }
+    }
+
+    // Comment / notes
     if (event.comment) html += `<div style="margin-top:10px;"><div class="detail-label">Comment</div><div class="code-snippet" style="border-left:3px solid var(--danger);">${esc(event.comment)}</div></div>`;
-    
+
+    // Identified elements
+    if (event.primaryElement || (event.resolvedElements && event.resolvedElements.length > 0)) {
+      html += `<div style="margin-top:10px;"><div class="detail-label">Identified Elements</div>`;
+      if (event.primaryElement) {
+        const pe = event.primaryElement;
+        html += `<div style="padding:8px; background:var(--bg-input); border-radius:4px; margin-top:4px; font-family:monospace; font-size:12px;">`;
+        html += `<span style="color:var(--primary);">&lt;${esc(pe.tagName)}&gt;</span> `;
+        html += `<span style="color:var(--text-secondary);">${esc(pe.selector)}</span>`;
+        if (pe.score != null) html += ` <span style="font-size:10px; color:var(--text-secondary);">score: ${Number(pe.score).toFixed(1)}</span>`;
+        if (pe.textContent) html += `<div style="margin-top:4px; color:var(--text-main);">"${esc(pe.textContent)}"</div>`;
+        const attrs = pe.dataAttributes ? Object.entries(pe.dataAttributes) : [];
+        if (attrs.length > 0) {
+          html += `<div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px;">`;
+          attrs.forEach(([k, v]) => { html += `<span style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:3px; padding:1px 5px; font-size:10px;">${esc(k)}="${esc(v as string)}"</span>`; });
+          html += `</div>`;
+        }
+        html += `</div>`;
+      }
+      if (event.resolvedElements && event.resolvedElements.length > 1) {
+        html += `<div style="margin-top:4px; font-size:12px; color:var(--text-secondary);">${event.resolvedElements.length - 1} more element(s)</div>`;
+      }
+      html += `</div>`;
+    }
+
+    // Selected text
+    if (event.selectedText) {
+      html += `<div style="margin-top:10px;"><div class="detail-label">Selected Text</div><div class="code-snippet" style="font-style:italic;">"${esc(event.selectedText)}"</div></div>`;
+    }
+
     // Nearest screencast frame + Highlight
     let closestFrame = null;
     let minDiff = Infinity;
@@ -321,7 +362,10 @@ function eventDetails(event: any): string {
     if (event.type === 'navigation') return `Navigated to <a href="${esc(event.url)}" target="_blank" style="color:var(--primary); word-break:break-word;">${esc(event.url)}</a>`;
     return esc(event.type);
   }
-  if (event.source === 'issue') return `<b>Reported:</b> ${esc(event.comment)}`;
+  if (event.source === 'issue') {
+    const summary = event.comment || event.currentState || event.desiredState || '';
+    return `<b>Reported:</b> ${esc(summary)}`;
+  }
   return '';
 }
 

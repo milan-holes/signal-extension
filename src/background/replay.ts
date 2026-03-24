@@ -69,21 +69,25 @@ export async function waitForContentScript(tabId: number, maxRetries = 20): Prom
     }
 }
 
-export async function injectReplayWidget(tabId: number, events: UserEvent[]): Promise<void> {
+export async function injectReplayWidget(tabId: number, events: UserEvent[], readyMode: boolean = true, issues?: any[], defaultDelay?: number | null): Promise<void> {
     await waitForContentScript(tabId);
     chrome.tabs.sendMessage(tabId, {
         action: 'replayWidgetInit',
         events,
-        tabId
+        tabId,
+        readyMode,
+        issues: issues || [],
+        defaultDelay: defaultDelay !== undefined ? defaultDelay : null
     });
 }
 
-async function updateReplayWidgetEvent(tabId: number, index: number, status: string, total: number): Promise<void> {
+async function updateReplayWidgetEvent(tabId: number, index: number, status: string, total: number, errorMessage?: string): Promise<void> {
     chrome.tabs.sendMessage(tabId, {
         action: 'replayWidgetUpdate',
         index,
         status,
-        total
+        total,
+        errorMessage
     });
 }
 
@@ -208,7 +212,8 @@ export async function executeReplay(tabId: number, events: UserEvent[]): Promise
                 if (_replayState[tabId]?.isCancelled) break;
 
                 try {
-                    await injectReplayWidget(tabId, replayable);
+                    const state = _replayState[tabId];
+                    await injectReplayWidget(tabId, replayable, false, state?.issues || [], state?.customDelay || null); // readyMode: false because replay is already executing
                     for (let j = 0; j < i; j++) {
                         await updateReplayWidgetEvent(tabId, j, 'done', replayable.length);
                     }
@@ -251,6 +256,15 @@ export async function executeReplay(tabId: number, events: UserEvent[]): Promise
 
         if (_replayState[tabId]?.isCancelled) break;
 
+        // Check if this event should be skipped
+        if (_replayState[tabId]?.skipCurrentEvent) {
+            _replayState[tabId].skipCurrentEvent = false;
+            clearReplayHighlight(tabId);
+            await updateReplayWidgetEvent(tabId, i, 'done', replayable.length);
+            completedCount = i + 1;
+            continue;
+        }
+
         await updateReplayWidgetEvent(tabId, i, 'active', replayable.length);
 
         try {
@@ -261,18 +275,30 @@ export async function executeReplay(tabId: number, events: UserEvent[]): Promise
                 result = await executeInput(tabId, event);
             }
             if (result) {
-                if (!result.found) throw new Error('Element not found on page');
-                if (result.error) throw new Error('Element found but interaction failed: ' + result.error);
+                if (!result.found) {
+                    // Show warning banner
+                    const elementDesc = event.target?.tagName ? `<${event.target.tagName.toLowerCase()}>` : 'element';
+                    chrome.tabs.sendMessage(tabId, {
+                        action: 'replayShowElementWarning',
+                        message: `Element ${elementDesc} not found - page content may have changed`
+                    });
+                    throw new Error('Element not found on page');
+                }
+                if (result.error) {
+                    throw new Error('Interaction failed: ' + result.error);
+                }
             }
             clearReplayHighlight(tabId);
+            chrome.tabs.sendMessage(tabId, { action: 'replayClearElementWarning' });
             await updateReplayWidgetEvent(tabId, i, 'done', replayable.length);
             completedCount = i + 1;
         } catch (e) {
+            const errorMessage = e instanceof Error ? e.message : String(e);
             console.warn('Event execution failed', e);
             clearReplayHighlight(tabId);
             errorCount++;
             completedCount = i + 1;
-            await updateReplayWidgetEvent(tabId, i, 'error', replayable.length);
+            await updateReplayWidgetEvent(tabId, i, 'error', replayable.length, errorMessage);
 
             chrome.tabs.sendMessage(tabId, {
                 action: 'replayWidgetShowSkipOption',
@@ -333,9 +359,16 @@ export async function replayRetryEvent(tabId: number, event: UserEvent, index: n
     const state = _replayState[tabId];
     if (!state) return;
 
-    await updateReplayWidgetEvent(tabId, index, 'active', state.events.length);
+    // Show countdown before retry
+    chrome.tabs.sendMessage(tabId, {
+        action: 'replayWidgetCountdown',
+        index: index,
+        duration: 2000
+    });
     highlightReplayTarget(tabId, event, index);
-    await sleep(800);
+    await sleep(2000);
+
+    await updateReplayWidgetEvent(tabId, index, 'active', state.events.length);
 
     try {
         let result: { found: boolean; error?: string } | undefined;
@@ -344,7 +377,14 @@ export async function replayRetryEvent(tabId: number, event: UserEvent, index: n
         } else if (event.type === 'input') {
             result = await executeInput(tabId, event);
         }
-        if (result && !result.found) throw new Error('Element not found on page');
+        if (result) {
+            if (!result.found) {
+                throw new Error('Element not found on page');
+            }
+            if (result.error) {
+                throw new Error('Interaction failed: ' + result.error);
+            }
+        }
 
         clearReplayHighlight(tabId);
         await updateReplayWidgetEvent(tabId, index, 'done', state.events.length);
@@ -373,9 +413,10 @@ export async function replayRetryEvent(tabId: number, event: UserEvent, index: n
             });
         } catch { }
     } catch (e) {
+        const errorMessage = e instanceof Error ? e.message : String(e);
         console.warn('Retry failed', e);
         clearReplayHighlight(tabId);
-        await updateReplayWidgetEvent(tabId, index, 'error', state.events.length);
+        await updateReplayWidgetEvent(tabId, index, 'error', state.events.length, errorMessage);
     }
 }
 
@@ -483,6 +524,7 @@ export async function setupReplayEnvironment(tabId: number, context: any, url: s
 async function executeClick(tabId: number, event: UserEvent): Promise<{ found: boolean; method?: string; error?: string }> {
     let found = false;
     let method = 'none';
+    let lastError = '';
     const target = event.target || {} as any;
     const selectorPath: any[] = target.selectorPath || [];
 
@@ -515,65 +557,104 @@ async function executeClick(tabId: number, event: UserEvent): Promise<{ found: b
         return true;
     });
 
+    console.log(`[Replay] Attempting to find element using ${uniqueStrategies.length} strategies:`, uniqueStrategies.map(s => s.label));
+
     for (const strategy of uniqueStrategies) {
         if (found) break;
 
         let attempts = 0;
-        const maxAttempts = 15;
+        const maxAttempts = 20; // Increased from 15
 
         while (attempts < maxAttempts) {
             try {
                 let expression: string;
                 if (strategy.type === 'css') {
-                    const safeSel = strategy.value.replace(/\\/g, '\\\\\\\\').replace(/"/g, '\\\\\\"');
+                    // Use JSON.stringify for proper escaping
+                    const safeSel = JSON.stringify(strategy.value).slice(1, -1);
                     expression = `(function(){
-            var el = document.querySelector("${safeSel}");
-            if (el) {
-              try {
-                el.scrollIntoView({block: 'center', inline: 'center'});
-                el.click();
-                return { found: true, method: "${strategy.label}" };
-              } catch (e) {
-                return { found: true, error: e.message || String(e), method: "${strategy.label}" };
+            try {
+              var el = document.querySelector("${safeSel}");
+              if (el) {
+                try {
+                  el.scrollIntoView({block: 'center', inline: 'center'});
+                  el.click();
+                  return { found: true, method: "${strategy.label}" };
+                } catch (e) {
+                  return { found: true, error: e.message || String(e), method: "${strategy.label}" };
+                }
               }
+              return { found: false };
+            } catch (e) {
+              return { found: false, error: e.message || String(e) };
             }
-            return { found: false };
           })()`;
                 } else {
-                    const safeXpath = strategy.value.replace(/"/g, '\\\\\\"');
+                    // Use JSON.stringify for XPath too
+                    const safeXpath = JSON.stringify(strategy.value).slice(1, -1);
                     expression = `(function(){
-            var el = document.evaluate("${safeXpath}", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-            if (el) {
-              try {
-                el.scrollIntoView({block: 'center', inline: 'center'});
-                el.click();
-                return { found: true, method: "${strategy.label}" };
-              } catch (e) {
-                return { found: true, error: e.message || String(e), method: "${strategy.label}" };
+            try {
+              var el = document.evaluate("${safeXpath}", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+              if (el) {
+                try {
+                  el.scrollIntoView({block: 'center', inline: 'center'});
+                  el.click();
+                  return { found: true, method: "${strategy.label}" };
+                } catch (e) {
+                  return { found: true, error: e.message || String(e), method: "${strategy.label}" };
+                }
               }
+              return { found: false };
+            } catch (e) {
+              console.error('[Replay Debug] XPath evaluation failed:', e.message);
+              return { found: false, error: e.message || String(e) };
             }
-            return { found: false };
           })()`;
                 }
 
                 const res = await sendCommand(tabId, 'Runtime.evaluate', {
                     expression,
-                    returnByValue: true
+                    returnByValue: true,
+                    includeCommandLineAPI: true
                 });
 
-                if (res?.result?.value?.found) {
+                // Check if command execution failed
+                if (!res || !res.result) {
+                    lastError = 'Runtime.evaluate failed';
+                    console.error('[Replay] Runtime.evaluate returned no result', res);
+                    continue;
+                }
+
+                // Check for evaluation errors
+                if (res.exceptionDetails) {
+                    lastError = res.exceptionDetails.exception?.description || 'Evaluation exception';
+                    console.error('[Replay] Runtime.evaluate exception:', res.exceptionDetails);
+                    continue;
+                }
+
+                // Check if the evaluated function returned a result
+                if (res.result.value?.found) {
                     if (res.result.value.error) {
+                        lastError = res.result.value.error;
+                        console.log(`[Replay] Element found with ${strategy.label} but interaction failed:`, res.result.value.error);
                         return { found: true, method: res.result.value.method, error: res.result.value.error };
                     }
                     found = true;
                     method = res.result.value.method || strategy.label;
+                    console.log(`[Replay] Element found successfully with ${strategy.label}`);
                     break;
+                } else {
+                    console.log(`[Replay] Element not found with ${strategy.label} (${strategy.value})`);
                 }
-            } catch { }
+            } catch (err) {
+                lastError = err instanceof Error ? err.message : String(err);
+                console.warn(`Strategy ${strategy.label} failed:`, err);
+            }
 
             attempts++;
-            if (attempts < maxAttempts && uniqueStrategies.indexOf(strategy) === 0) {
-                await sleep(200);
+            if (attempts < maxAttempts) {
+                // Wait before retrying - longer wait on first few attempts to let page load
+                const waitTime = attempts < 5 ? 500 : 200;
+                await sleep(waitTime);
             } else {
                 break;
             }
@@ -587,10 +668,12 @@ async function executeClick(tabId: number, event: UserEvent): Promise<{ found: b
             await sendCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: event.x, y: event.y, button: 'left', clickCount: 1 });
             found = true;
             method = 'coordinates';
-        } catch { }
+        } catch (err) {
+            lastError = err instanceof Error ? err.message : String(err);
+        }
     }
 
-    return { found, method };
+    return { found, method, error: !found && lastError ? lastError : undefined };
 }
 
 // ── Execute Input ────────────────────────────────────────────────────
@@ -644,32 +727,49 @@ async function executeInput(tabId: number, event: UserEvent): Promise<{ found: b
 
     for (const strategy of uniqueStrategies) {
         let attempts = 0;
-        const maxAttempts = 15;
+        const maxAttempts = 20; // Increased from 15
 
         while (attempts < maxAttempts) {
             try {
                 let findExpr: string;
                 if (strategy.type === 'css') {
-                    const safeSel = strategy.value.replace(/\\/g, '\\\\\\\\').replace(/"/g, '\\\\\\"');
+                    // Use JSON.stringify for proper escaping
+                    const safeSel = JSON.stringify(strategy.value).slice(1, -1);
                     findExpr = `document.querySelector("${safeSel}")`;
                 } else {
-                    const safeXpath = strategy.value.replace(/"/g, '\\\\\\"');
+                    // Use JSON.stringify for XPath too
+                    const safeXpath = JSON.stringify(strategy.value).slice(1, -1);
                     findExpr = `document.evaluate("${safeXpath}", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue`;
                 }
 
                 const res = await sendCommand(tabId, 'Runtime.evaluate', {
                     expression: buildInputExpression(findExpr),
-                    returnByValue: true
+                    returnByValue: true,
+                    includeCommandLineAPI: true
                 });
 
-                if (res?.result?.value?.found) {
+                if (!res || !res.result) {
+                    console.error('[Replay Input] Runtime.evaluate returned no result', res);
+                    continue;
+                }
+
+                if (res.exceptionDetails) {
+                    console.error('[Replay Input] Runtime.evaluate exception:', res.exceptionDetails);
+                    continue;
+                }
+
+                if (res.result.value?.found) {
                     return res.result.value;
                 }
-            } catch { }
+            } catch (err) {
+                console.warn(`Input strategy ${strategy.type} failed:`, err);
+            }
 
             attempts++;
-            if (attempts < maxAttempts && uniqueStrategies.indexOf(strategy) === 0) {
-                await sleep(200);
+            if (attempts < maxAttempts) {
+                // Wait before retrying - longer wait on first few attempts to let page load
+                const waitTime = attempts < 5 ? 500 : 200;
+                await sleep(waitTime);
             } else {
                 break;
             }

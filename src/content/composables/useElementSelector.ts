@@ -3,6 +3,16 @@ export function useElementSelector() {
     const getCssSelector = (element: Element | null): string => {
         if (!element || element.nodeType !== Node.ELEMENT_NODE) return '';
 
+        // Check if element is inside extension UI (shadow DOM)
+        let checkEl = element as Element | null;
+        while (checkEl) {
+            if (checkEl.id === 'signal-root' || checkEl.id === 'signal-replay-widget-root') {
+                console.warn('[Signal] Attempted to generate selector for extension UI element');
+                return '';
+            }
+            checkEl = checkEl.parentElement;
+        }
+
         const testAttrs = ['data-testid', 'data-cy', 'data-test', 'data-qa', 'data-id', 'data-e2e'];
         for (const attr of testAttrs) {
             const val = element.getAttribute(attr);

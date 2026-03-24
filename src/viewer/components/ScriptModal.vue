@@ -4,7 +4,7 @@
       <div class="modal-header">
         <span class="modal-title">{{ title }}</span>
         <div style="display:flex; gap:8px; align-items:center;">
-          <CopyButton :content="content" label="Copy to Clipboard" primary />
+          <CopyButton :content="content" label="Copy to Clipboard" />
           <span class="close-icon" @click="$emit('close')">✕</span>
         </div>
       </div>
