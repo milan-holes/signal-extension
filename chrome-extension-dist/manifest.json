@@ -1,0 +1,71 @@
+{
+  "manifest_version": 3,
+  "name": "Signal: Report bugs & feedback with context developers love",
+  "version": "1.7.8",
+  "description": "Record and share detailed bug reports: console logs, network traffic, storage state, environment data, and screencasts.",
+  "permissions": [
+    "debugger",
+    "scripting",
+    "storage",
+    "activeTab",
+    "unlimitedStorage",
+    "downloads",
+    "tabCapture"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["signal-vue-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ],
+  "action": {
+    "default_popup": "src/popup/index.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "commands": {
+    "commit-buffer": {
+      "suggested_key": {
+        "default": "Alt+Shift+B"
+      },
+      "description": "Commit rolling buffer snapshot"
+    },
+    "pause-buffer": {
+      "suggested_key": {
+        "default": "Alt+Shift+P"
+      },
+      "description": "Pause or resume rolling buffer"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/viewer/index.html",
+        "src/screenshot-editor/index.html",
+        "src/camera/index.html",
+        "assets/*"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
