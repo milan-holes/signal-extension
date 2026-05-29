@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Signal: Report bugs & feedback with context developers love",
-  "version": "1.7.8",
+  "version": "1.8.0",
   "description": "Record and share detailed bug reports: console logs, network traffic, storage state, environment data, and screencasts.",
   "permissions": [
     "debugger",
@@ -12,17 +12,27 @@
     "downloads",
     "tabCapture"
   ],
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["signal-vue-hook.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "signal-vue-hook.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"]
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ]
     }
   ],
   "action": {
@@ -65,7 +75,9 @@
         "src/camera/index.html",
         "assets/*"
       ],
-      "matches": ["<all_urls>"]
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ]
 }

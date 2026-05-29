@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.8.0] - 2026-05-29
+
+### Added
+
+- **Session History**: Every recorded session is now automatically saved to a local history accessible from a clock icon in the popup header. No MCP server required - sessions are stored in the extension's own storage.
+- **Sessions listing**: The sessions view shows all saved sessions as cards with browser, date, and issue count. Pinned sessions are highlighted with an amber accent and are exempt from automatic trimming.
+- **Per-session actions**: Each session card has a dropdown menu with four actions: View (replay the full report in the viewer), Rename, Pin/Unpin, Export as JSON (download the raw report), and Delete.
+- **Session History Limit setting**: A new "Maximum Saved Sessions" control in Settings under General lets you configure how many sessions to keep (1-100, default 10). Oldest non-pinned sessions are removed automatically when the limit is exceeded.
+
 ## [1.7.8] - 2026-05-16
 
 ### Added
